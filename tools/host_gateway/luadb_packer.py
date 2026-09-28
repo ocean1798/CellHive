@@ -925,6 +925,48 @@ def verify_release_package(package_dir: str, work_dir: str) -> Dict[str, Any]:
     return pkg_again
 
 
+def get_fota_bundle_dir(custom_path: Optional[str] = None) -> Optional[str]:
+    """
+    获取统一 fota_bundle 逻辑资源位置。
+    frozen 模式下读取 _MEIPASS/fota_bundle，缺包不得回退源码目录或硬编码版本；
+    非 frozen 模式在 tools/host_gateway/fota_bundle 查找；
+    若提供 custom_path 则以其为准。
+    若目标目录不存在，返回 None。
+    """
+    if custom_path:
+        return custom_path if os.path.exists(custom_path) else None
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        if not meipass:
+            return None
+        candidate = os.path.join(meipass, "fota_bundle")
+        return candidate if os.path.isdir(candidate) else None
+    candidate = os.path.join(BASE_DIR, "fota_bundle")
+    return candidate if os.path.isdir(candidate) else None
+
+
+def load_bundled_release_package(bundle_dir: Optional[str] = None) -> Tuple[str, Optional[Dict[str, Any]], Optional[str]]:
+    """
+    只读加载并校验随附 release 包。
+    返回 (check_status, package_data, error_reason):
+    - ("no_package", None, "未检测到上位机随附更新包"): 目录缺失或为空
+    - ("invalid_package", None, reason): 存在目录但校验失败
+    - ("ok", package_data, None): 校验成功
+    """
+    pkg_dir = get_fota_bundle_dir(bundle_dir)
+    if not pkg_dir or not os.path.exists(pkg_dir):
+        return ("no_package", None, "未检测到上位机随附更新包")
+    if not os.path.isdir(pkg_dir):
+        return ("invalid_package", None, "随附包路径非有效目录")
+    try:
+        pkg_data = load_release_package(pkg_dir)
+        return ("ok", pkg_data, None)
+    except FileNotFoundError as e:
+        return ("invalid_package", None, f"随附更新包文件缺失: {e}")
+    except Exception as e:
+        return ("invalid_package", None, f"随附更新包校验失败: {e}")
+
+
 if __name__ == "__main__":
     print("⚡ 测试运行 Lua 语法预检与 LuaDB 打包器...")
     ok, errs = validate_lua_syntax()

@@ -73,8 +73,8 @@ local function format_message(msg_type, from, text, extra)
         md_text = "### " .. title .. "\n> **发件人**: " .. sender .. otp_m .. "\n\n**短信原文**:\n" .. content
     elseif msg_type == "call" then
         title = "📞 拦截到呼入电话"
-        plain_text = "呼入号码: " .. sender .. "\r\n拦截处理: 已自动秒级拒接 (双方0元话费)"
-        md_text = "### " .. title .. "\n> **呼入号码**: " .. sender .. "\n> **拦截处理**: 已自动秒级拒接 (双方0元话费)"
+        plain_text = "呼入号码: " .. sender .. "\r\n拦截处理: 已自动拒接"
+        md_text = "### " .. title .. "\n> **呼入号码**: " .. sender .. "\n> **拦截处理**: 已自动拒接"
     elseif msg_type == "boot" then
         title = "🚀 智能通信网关已上线"
         plain_text = content

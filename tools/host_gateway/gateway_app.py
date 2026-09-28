@@ -59,7 +59,7 @@ def get_config_dir() -> str:
 
 # 引入中枢核心与 Web 服务器
 from gateway_hub import GatewayHub, HUB_HOST, HUB_PORT, SERIAL_PORT, SERIAL_BAUD, show_windows_toast
-from gateway_web import WebServer, DEFAULT_WEB_HOST, DEFAULT_WEB_PORT
+from gateway_web import WebServer, DEFAULT_WEB_HOST, DEFAULT_WEB_PORT, get_autostart_status, set_autostart_status
 
 _app_mutex = None
 
@@ -207,7 +207,7 @@ class GatewayDesktopApp:
             threading.Thread(target=self._delayed_open_app_window, daemon=True).start()
 
         # 4. 弹出 Windows Toast 提示
-        show_windows_toast("Air780EPV 智能网关", "网关中枢已在后台启动，短信验证码将毫秒级存入剪贴板。")
+        show_windows_toast("数字蜂巢 · CellHive", "蜂巢中枢已在后台守护，短信验证码将毫秒级存入剪贴板。")
 
         # 5. 启动系统托盘或保持命令行主循环
         if self.use_tray:
@@ -229,14 +229,16 @@ class GatewayDesktopApp:
                 raise RuntimeError("无法创建托盘图像")
 
             menu = pystray.Menu(
-                pystray.MenuItem("📱 打开网关客户端", self._action_open_app, default=True),
+                pystray.MenuItem("📱 打开数字蜂巢控制台", self._action_open_app, default=True),
+                pystray.MenuItem("开机自动启动", self._action_toggle_autostart, checked=lambda item: get_autostart_status()),
                 pystray.MenuItem("⚡ 软复位模组 (重启)", self._action_reboot_board),
                 pystray.MenuItem("📁 打开配置目录", self._action_open_config_dir),
+                pystray.MenuItem("ℹ️ 关于数字蜂巢", self._action_about),
                 pystray.Menu.SEPARATOR,
-                pystray.MenuItem("❌ 退出网关", self._action_exit)
+                pystray.MenuItem("❌ 退出数字蜂巢", self._action_exit)
             )
 
-            self.tray_icon = pystray.Icon("Air780EPV_Gateway", icon_img, "Air780EPV 智能网关", menu)
+            self.tray_icon = pystray.Icon("CellHive", icon_img, "数字蜂巢 · CellHive", menu)
             self.tray_icon.run()
         except Exception as e:
             if sys.stderr:
@@ -255,6 +257,32 @@ class GatewayDesktopApp:
     def _action_open_app(self, icon=None, item=None):
         launch_desktop_app_window(f"http://127.0.0.1:{self.web_port}")
 
+    def _action_toggle_autostart(self, icon=None, item=None):
+        cur = get_autostart_status()
+        new_state = not cur
+        set_autostart_status(new_state)
+        try:
+            cfg_path = os.path.join(get_config_dir(), "gateway_config.json")
+            if os.path.exists(cfg_path):
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                if not isinstance(cfg, dict):
+                    cfg = {}
+                cfg.setdefault("system", {})["autostart"] = new_state
+                next_p = cfg_path + ".next"
+                with open(next_p, "w", encoding="utf-8") as f:
+                    json.dump(cfg, f, ensure_ascii=False, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(next_p, cfg_path)
+        except Exception:
+            pass
+        msg = "已开启开机自动静默常驻" if new_state else "已关闭开机自启动"
+        show_windows_toast("数字蜂巢 · CellHive", msg)
+
+    def _action_about(self, icon=None, item=None):
+        launch_desktop_app_window(f"http://127.0.0.1:{self.web_port}/#about")
+
     def _action_reboot_board(self, icon=None, item=None):
         def _reboot():
             try:
@@ -264,9 +292,9 @@ class GatewayDesktopApp:
                 req = json.dumps({"type": "req", "id": f"tray_rb_{int(time.time())}", "cmd": "reboot", "data": {"reason": "tray_menu"}}) + "\n"
                 s.sendall(req.encode("utf-8"))
                 s.close()
-                show_windows_toast("Air780EPV 智能网关", "已向模组发送软复位重启指令")
+                show_windows_toast("数字蜂巢 · CellHive", "已向模组发送软复位重启指令")
             except Exception as e:
-                show_windows_toast("Air780EPV 智能网关", f"发送重启指令失败: {e}")
+                show_windows_toast("数字蜂巢 · CellHive", f"发送重启指令失败: {e}")
         threading.Thread(target=_reboot, daemon=True).start()
 
     def _action_open_config_dir(self, icon=None, item=None):
@@ -297,7 +325,7 @@ class GatewayDesktopApp:
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Air780EPV 智能随身通信网关 - Windows 桌面应用")
+    parser = argparse.ArgumentParser(description="数字蜂巢 · CellHive - 桌面私人蜂窝通信中枢")
     parser.add_argument("--com", default=SERIAL_PORT, help=f"下位机物理串口号 (默认 {SERIAL_PORT})")
     parser.add_argument("--baud", type=int, default=SERIAL_BAUD, help=f"串口波特率 (默认 {SERIAL_BAUD})")
     parser.add_argument("--web-port", type=int, default=DEFAULT_WEB_PORT, help=f"Web 看板端口 (默认 {DEFAULT_WEB_PORT})")
@@ -310,13 +338,16 @@ def main():
         _log_debug("Mutex not acquired, exiting main")
         sys.exit(0)
 
-    _log_debug("Mutex acquired, creating app...")
+    # 手动启动必定打开控制台窗口；开机自启动时因带 --no-browser 则静默常驻系统托盘
+    should_open_browser = not args.no_window
+
+    _log_debug(f"Mutex acquired, creating app... (open_browser={should_open_browser})")
     app = GatewayDesktopApp(
         com=args.com,
         baud=args.baud,
         hub_port=args.hub_port,
         web_port=args.web_port,
-        open_browser=(not args.no_window),
+        open_browser=should_open_browser,
         use_tray=(not args.no_tray)
     )
     app.start()

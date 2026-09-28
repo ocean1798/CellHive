@@ -316,7 +316,7 @@ class GatewayDriver:
         return self.execute_cmd("clear_history", slot=slot, timeout=4.0)
 
     def dial_phone(self, phone: str, slot: Optional[str] = None, timeout_seconds: int = 15, hangup_on_answer: bool = True) -> Dict[str, Any]:
-        """发起 4G VoLTE 语音呼叫（支持指定卡槽与超时看门狗防扣费 AIR-30）"""
+        """发起 4G VoLTE 语音呼叫（支持指定卡槽与超时自动挂断）"""
         if not phone:
             raise ValueError("电话号码不能为空")
         params = {"phone": phone, "timeout": timeout_seconds, "hangup_on_answer": hangup_on_answer}
@@ -338,7 +338,7 @@ class GatewayDriver:
         return self.execute_cmd("set_rndis", {"enable": enable}, slot=slot, timeout=5.0)
 
     def set_cellular_data(self, enable: bool, slot: Optional[str] = None) -> Dict[str, Any]:
-        """启闭模组自身 4G 蜂窝数据 (0流量纯信令保号开关)"""
+        """开启或关闭模组自身移动数据"""
         return self.execute_cmd("set_cellular_data", {"enable": enable}, slot=slot, timeout=5.0)
 
     def reboot(self, reason: str = "mcp_trigger", slot: Optional[str] = None) -> Dict[str, Any]:

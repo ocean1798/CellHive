@@ -10,6 +10,12 @@
 
 **插上电脑自动收短信 • 验证码自动存入剪贴板直接 Ctrl+V • 插电脑不耗手机卡流量 • Windows 免安装双击即用**
 
+<br />
+
+<img src="specs/cellhive_web_console_live.png" alt="数字蜂巢 · CellHive 控制台界面" width="95%" />
+
+<br />
+
 [🚀 3步快速上手](#quickstart) • [📥 软件与固件下载](#download) • [📱 硬件选型](#hardware) • [🗺️ 进阶配置指南](#docs) • [⚠️ 避坑提醒](#pitfalls)
 
 </div>

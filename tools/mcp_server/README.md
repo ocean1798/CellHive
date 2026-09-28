@@ -51,12 +51,12 @@
 | **`cellular_list_dongles`** | 无 | **查看模组集群列表**：探测并列出所有已接入的 4G 模组型号、卡槽编号、绑定手机号、信号强度及 VoLTE 语音能力。 |
 | **`cellular_get_status`** | `slot: null` | **查看运行状态看板**：获取信号强度(CSQ/RSRP)、核心温度、供电电压、黑匣子存量、随身上网状态及开机运行时间。 |
 | **`cellular_send_sms`** | `phone` (号码)<br>`content` (正文)<br>`slot: null`<br>`strategy: "operator_affinity"` | **发送短信**：驱动 4G 模组主动代发一条短信，支持按同运营商优先分流，监听基站发送回执。 |
-| **`cellular_dial_phone`** | `phone` (号码)<br>`slot: null`<br>`timeout_seconds: 15`<br>`hangup_on_answer: true` | **拨打电话振铃**：用 4G VoLTE 语音拨打目标电话振铃告警。接听后立即秒挂断（双方 0 话费），带 15 秒超时自动挂断看门狗。*(仅带语音的模组支持)* |
+| **`cellular_dial_phone`** | `phone` (号码)<br>`slot: null`<br>`timeout_seconds: 15`<br>`hangup_on_answer: true` | **拨打电话振铃**：用 4G VoLTE 语音拨打目标电话振铃告警。接听后立即挂断，超时自动挂断。*(仅带语音的模组支持)* |
 | **`cellular_hangup_phone`** | `slot: null` | **主动挂断电话**：立即挂断当前正在进行中的电话呼叫。 |
 | **`cellular_get_history`** | `limit: 20`<br>`keyword: null`<br>`slot: null` | **查看短信历史**：查阅模组板载 LittleFS 脱机黑匣子中的短信存档（断电不丢，支持关键词搜索）。 |
 | **`cellular_clear_sms_history`**| `slot: null` | **清空短信历史**：清空板载脱机黑匣子中的全部短信存档。 |
-| **`cellular_toggle_rndis`** | `enable: bool`<br>`slot: null` | **随身上网开关**：开启或关闭 USB 虚拟网卡 RNDIS 4G 上网功能（出厂默认关闭防偷跑流量）。 |
-| **`cellular_toggle_board_data`**| `enable: bool`<br>`slot: null` | **板载 4G 数据通信开关**：开启或切断模组自身的数据连接（出厂默认掐断，保持 0 流量纯信令保号）。 |
+| **`cellular_toggle_rndis`** | `enable: bool`<br>`slot: null` | **随身上网开关**：开启或关闭 USB 虚拟网卡 RNDIS 4G 上网功能（出厂默认关闭）。 |
+| **`cellular_toggle_board_data`**| `enable: bool`<br>`slot: null` | **板载 4G 数据通信开关**：开启或切断模组自身的数据连接（出厂默认关闭，由上位机推送）。 |
 | **`cellular_reboot_gateway`** | `reason: "mcp_agent_action"`<br>`slot: null` | **软复位重启**：向模组下发软复位指令，安全重启硬件。 |
 
 ### 2. Resources 资源列表（AI 可直接读取的数据）

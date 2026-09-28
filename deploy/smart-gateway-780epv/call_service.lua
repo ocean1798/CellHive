@@ -74,8 +74,8 @@ function M.init()
                     iccid = model.iccid()
                 })
                 local notice_text = is_fota
-                    and "⚡【FOTA 暗号触发】来电已 0 话费拒接，正在激活 4G 蜂窝空中热更新探测..."
-                    or "来电已主动拦截拒接（双方 0 元话费）"
+                    and "⚡【FOTA 暗号触发】来电已自动拒接，正在激活空中更新..."
+                    or "来电已主动拦截拒接"
                 sys.publish("NOTIFY_PUSH", "call", from, notice_text, "", msg_id)
                 if is_fota then
                     sys.timerStart(function()
@@ -136,13 +136,13 @@ function M.init()
                 call_state.dial_timer = nil
             end
 
-            -- 启动防扣费超时看门狗定时器
+            -- 启动呼叫超时定时器
             call_state.dial_timer = sys.timerStart(function()
                 log.info("call", "Dial timeout watchdog expired -> auto hangup to ensure 0 toll")
                 pcall(cc.hangUp, 0)
                 call_state.is_dialing = false
                 call_state.dial_timer = nil
-                serial_comm.publish("call_status", { status = "TIMEOUT_HANGUP", message = "呼叫超时，已自动挂断（双方0话费）" })
+                serial_comm.publish("call_status", { status = "TIMEOUT_HANGUP", message = "呼叫超时，已自动挂断" })
             end, timeout_sec * 1000)
 
             local ok, dial_res = pcall(cc.dial, 0, phone)

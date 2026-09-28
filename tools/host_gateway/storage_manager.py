@@ -115,7 +115,7 @@ def derive_operator_and_badge(iccid: Optional[str] = None,
     # 生成紧凑融合风格展示徽章 (方案 C: Air780EPV · 联通 2515)
     raw_model = str(model or "").replace("合宙", "").strip()
     if not raw_model:
-        raw_model = "Air780E" if slot == "slot_2" else "Air780EPV"
+        raw_model = "Air780"
 
     if badge_tail and short_op != "蜂窝":
         display_badge = f"{raw_model} · {short_op} {badge_tail}"
@@ -126,7 +126,8 @@ def derive_operator_and_badge(iccid: Optional[str] = None,
     else:
         display_badge = f"{raw_model} · 蜂窝网络"
 
-    slot_name = "卡 2" if slot == "slot_2" else ("卡 1" if slot == "slot_1" else (slot or "模组"))
+    m_slot = re.match(r"^slot_(\d+)$", str(slot or ""))
+    slot_name = f"卡 {m_slot.group(1)}" if m_slot else (slot or "模组")
     slot_label = f"{slot_name} · {operator}"
 
     return {
@@ -462,6 +463,20 @@ class StorageManager:
                     m_copy["slot"] = msg_slot
                     m_copy["iccid"] = card_name
                     m_copy["sort_ts"] = float(ts)
+                    # A parsed legacy text/id may sort records, but must not become display time.
+                    source_time = m.get("timestamp")
+                    if source_time is None and (isinstance(raw_time, (int, float)) or
+                                                (isinstance(raw_time, str) and raw_time.strip().isdigit())):
+                        source_time = raw_time
+                    try:
+                        display_ts = float(source_time)
+                        if 1e11 <= display_ts < 1e14:
+                            display_ts /= 1000
+                        if not 1e9 <= display_ts < 1e11:
+                            raise ValueError("untrusted timestamp")
+                        m_copy["timestamp"] = display_ts
+                    except (TypeError, ValueError):
+                        m_copy.pop("timestamp", None)
                     m_copy["id"] = m_id or f"{msg_slot}_{int(float(ts)*1000)}"
 
                     # 关联卡槽当前活跃元数据 (真实本机号码与型号，杜绝将发件人误当本机号码)

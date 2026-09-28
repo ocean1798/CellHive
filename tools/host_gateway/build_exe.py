@@ -23,7 +23,57 @@ LUA_SCRIPTS_DIR = os.path.join(PROJECT_ROOT, "deploy", "smart-gateway-780epv")
 FLASHER_DIR = os.path.join(PROJECT_ROOT, "tools", "flasher")
 DUMMY_BIN = os.path.join(PROJECT_ROOT, "tools", "Luatools", "_temp", "dummy.bin")
 
-def build(output_dir=None, build_info=None):
+def build(output_dir=None, build_info=None, fota_bundle=None):
+    # 0. 在创建输出目录与启动 PyInstaller 之前，必须对用户指定的随附包进行前置完整性校验
+    fota_bundle_valid = None
+    if fota_bundle:
+        bundle_abs = os.path.abspath(fota_bundle)
+        if not os.path.isdir(bundle_abs):
+            print(f"[-] 错误: 指定的随附包目录不存在或非目录: {bundle_abs}")
+            sys.exit(1)
+
+        # 随附包目录项白名单严审：仅允许 manifest.json, script.bin, script_ota.bin 三个正规文件
+        # 严禁任何额外文件、目录或符号链接，杜绝非包内容随目录打入 EXE
+        expected_items = {"manifest.json", "script.bin", "script_ota.bin"}
+        try:
+            actual_items = set(os.listdir(bundle_abs))
+            if actual_items != expected_items:
+                extra = actual_items - expected_items
+                missing = expected_items - actual_items
+                reasons = []
+                if extra:
+                    reasons.append(f"包含非法额外项 {sorted(list(extra))}")
+                if missing:
+                    reasons.append(f"缺少必要文件 {sorted(list(missing))}")
+                print(f"[-] 错误: 随附包目录项不合法: {'; '.join(reasons)}")
+                sys.exit(1)
+
+            for item_name in actual_items:
+                item_path = os.path.join(bundle_abs, item_name)
+                if os.path.islink(item_path):
+                    print(f"[-] 错误: 随附包禁止包含符号链接/快捷方式: {item_name}")
+                    sys.exit(1)
+                if os.path.isdir(item_path):
+                    print(f"[-] 错误: 随附包禁止包含子目录: {item_name}")
+                    sys.exit(1)
+        except SystemExit:
+            raise
+        except Exception as e:
+            print(f"[-] 错误: 扫描随附包目录失败: {e}")
+            sys.exit(1)
+
+        try:
+            import luadb_packer
+            pkg_data = luadb_packer.load_release_package(bundle_abs)
+            manifest = pkg_data.get("manifest", {})
+            pkg_ver = manifest.get("version")
+            pkg_id = manifest.get("package_id")
+            print(f"[+] 随附更新包前置校验通过: v{pkg_ver} (package_id: {pkg_id[:16] if pkg_id else 'none'}...)")
+            fota_bundle_valid = bundle_abs
+        except Exception as e:
+            print(f"[-] 错误: 指定随附包完整性校验未通过: {e}")
+            sys.exit(1)
+
     dist_dir = os.path.join(output_dir, "dist") if output_dir else DIST_DIR
     build_dir = os.path.join(output_dir, "work") if output_dir else BUILD_DIR
     if output_dir:
@@ -63,6 +113,13 @@ def build(output_dir=None, build_info=None):
     if build_info:
         cmd.append(f"--add-data={build_info};.")
 
+    # 统一装入受验随附包逻辑资源位置 (AIR-38 / fota_bundle)
+    if fota_bundle_valid:
+        cmd.append(f"--add-data={fota_bundle_valid};fota_bundle")
+        print(f"[*] 随附受验包已配置打包: {fota_bundle_valid} -> fota_bundle")
+    else:
+        print("[*] 未提供随附包，生成免随附包安装镜像 (运行时报告 no_package)")
+
     if os.path.exists(ICON_PATH):
         cmd.append(f"--icon={ICON_PATH}")
 
@@ -94,5 +151,6 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--output-dir")
     parser.add_argument("--build-info")
+    parser.add_argument("--fota-bundle", help="显式受验随附成品包目录")
     args = parser.parse_args()
-    build(os.path.abspath(args.output_dir) if args.output_dir else None, args.build_info)
+    build(os.path.abspath(args.output_dir) if args.output_dir else None, args.build_info, args.fota_bundle)

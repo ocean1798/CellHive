@@ -59,8 +59,8 @@ class SiliconGatewayBridge:
         seconds = uptime % 60
         uptime_str = f"{hours}时 {minutes}分 {seconds}秒"
 
-        rndis_str = "🟢 已开启 (USB网卡在线)" if rndis else "🔴 已关闭 (0流量防偷跑)"
-        data_str = "🟢 已开启 (板端蜂窝)" if cell_data else "⚪ 纯信令0流量 (电脑代推)"
+        rndis_str = "🟢 已开启 (USB网卡在线)" if rndis else "🔴 已关闭"
+        data_str = "🟢 已开启 (移动数据)" if cell_data else "⚪ 已关闭 (移动数据)"
 
         latest_sms_dict = None
         if latest_item:

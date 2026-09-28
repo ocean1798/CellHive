@@ -3,15 +3,34 @@ import sys
 import time
 import json
 import socket
+import ipaddress
 import threading
 import queue
 import argparse
 import base64
+import hashlib
 import re
-from typing import Optional, Dict, Any, List
+import uuid
+from typing import Optional, Dict, Any, List, Tuple
 from urllib.parse import urlparse, parse_qs
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from socketserver import ThreadingMixIn
+
+
+def _public_gateway_config(config):
+    """Keep notification credentials server-side while reporting configured state."""
+    public = {}
+    for section, value in config.items():
+        if not isinstance(value, dict):
+            public[section] = value
+            continue
+        item = dict(value)
+        if section in ("feishu", "dingtalk", "wecom", "bark", "webhook"):
+            for key in ("url", "secret"):
+                if key in item:
+                    item[key + "_configured"] = bool(item.pop(key))
+        public[section] = item
+    return public
 
 # 引入 luadb_packer 打包引擎
 HOST_GATEWAY_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "host_gateway"))
@@ -35,6 +54,18 @@ DEFAULT_WEB_HOST = "0.0.0.0"
 DEFAULT_WEB_PORT = 17801
 DEFAULT_HUB_HOST = "127.0.0.1"
 DEFAULT_HUB_PORT = 17800
+
+def _event_unix_seconds(value):
+    """Use only an explicit Unix second/millisecond value, never a naive time string."""
+    try:
+        if isinstance(value, bool) or value is None:
+            return None
+        seconds = float(value)
+        if 1e11 <= seconds < 1e14:
+            seconds /= 1000
+        return seconds if 1e9 <= seconds < 1e11 else None
+    except (TypeError, ValueError):
+        return None
 
 class _SafeStream:
     def write(self, msg): pass
@@ -65,12 +96,588 @@ WEB_DIR = os.path.join(BUNDLE_DIR, "web")
 INDEX_HTML_PATH = os.path.join(WEB_DIR, "index.html")
 GATEWAY_CONFIG_PATH = os.path.join(DATA_DIR, "gateway_config.json")
 
+try:
+    import gateway_runtime as runtime
+    APP_VERSION = getattr(runtime, "BUSINESS_VERSION", "1.3.0")
+except ImportError:
+    runtime = None
+    APP_VERSION = "1.3.0"
+
+RUN_KEY_PATH = r"Software\Microsoft\Windows\CurrentVersion\Run"
+RUN_APP_NAME = "CellHiveGateway"
+
+def get_log_dir() -> str:
+    if runtime and hasattr(runtime, "directory"):
+        try:
+            return runtime.directory("logDir")
+        except Exception:
+            pass
+    env_log = os.environ.get("GATEWAY_LOG_DIR")
+    if env_log:
+        return os.path.abspath(env_log)
+    return DATA_DIR
+
+def get_autostart_status() -> bool:
+    """实时查询注册表 HKCU Run 项，以此作为开机自启唯一真理源 (SSOT)"""
+    if sys.platform != "win32":
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY_PATH, 0, winreg.KEY_READ) as key:
+            val, _ = winreg.QueryValueEx(key, RUN_APP_NAME)
+            return bool(val)
+    except (FileNotFoundError, OSError):
+        return False
+
+def set_autostart_status(enable: bool) -> bool:
+    """根据布尔值增删注册表 HKCU 启动项，自动适配 Exe 与源码环境"""
+    if sys.platform != "win32":
+        return False
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER, RUN_KEY_PATH, 0, winreg.KEY_SET_VALUE) as key:
+            if enable:
+                if getattr(sys, "frozen", False):
+                    cmd = f'"{os.path.abspath(sys.executable)}" --no-browser'
+                else:
+                    python_exe = sys.executable
+                    pythonw = os.path.join(os.path.dirname(python_exe), "pythonw.exe")
+                    if os.path.exists(pythonw):
+                        python_exe = pythonw
+                    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "gateway_app.py"))
+                    cmd = f'"{python_exe}" "{script_path}" --no-browser'
+                winreg.SetValueEx(key, RUN_APP_NAME, 0, winreg.REG_SZ, cmd)
+            else:
+                try:
+                    winreg.DeleteValue(key, RUN_APP_NAME)
+                except FileNotFoundError:
+                    pass
+            return True
+    except Exception as e:
+        _log(f"设置自启动注册表异常: {e}")
+        return False
+
+# 虚拟与代理适配器特征黑名单关键字 (大小写无关) (AIR-63)
+VIRTUAL_IFACE_KEYWORDS = (
+    "meta", "mihomo", "clash", "sing-box", "v2ray", "wsl", "vethernet",
+    "hyper-v", "vmnet", "vmware", "vbox", "virtual", "virbr", "docker",
+    "tap", "tun", "rndis", "tailscale", "zerotier", "wireguard"
+)
+
+# 保留与虚假 IP 拒绝网段 (AIR-63)
+BOGUS_OR_RESERVED_NETWORKS = (
+    ipaddress.ip_network("127.0.0.0/8"),      # 本机环回
+    ipaddress.ip_network("169.254.0.0/16"),   # 链路本地 APIPA
+    ipaddress.ip_network("198.18.0.0/15"),    # 基准测试 / 代理 Fake-IP
+    ipaddress.ip_network("100.64.0.0/10"),    # 运营商级 CGNAT / Tailscale 虚拟网
+    ipaddress.ip_network("0.0.0.0/8"),        # 本网络
+    ipaddress.ip_network("224.0.0.0/4"),      # 组播
+)
+
+_RFC1918_172 = ipaddress.ip_network("172.16.0.0/12")
+
+def _is_virtual_iface_name(name: str) -> bool:
+    """判定适配器名称是否包含虚拟/代理关键字 (AIR-63)"""
+    if not name:
+        return False
+    low = str(name).lower()
+    return any(k in low for k in VIRTUAL_IFACE_KEYWORDS)
+
+def _is_valid_lan_ipv4(ip_str: str) -> bool:
+    """严格判定是否为合规的私有物理局域网 IPv4 地址 (AIR-63)"""
+    if not ip_str:
+        return False
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        if ip.version != 4:
+            return False
+        # 排除环回、链路本地、未指定、组播与保留广播
+        if ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast or ip.is_reserved:
+            return False
+        # 排除测试保留与 Fake-IP 网段
+        for bogus_net in BOGUS_OR_RESERVED_NETWORKS:
+            if ip in bogus_net:
+                return False
+        # 必须是标准私有网段 (RFC 1918)
+        return ip.is_private
+    except (ValueError, TypeError):
+        return False
+
+def _ip_priority_score(ip_str: str) -> int:
+    """
+    私有局域网 IP 优先级评分：分值越高越优先 (AIR-63)
+    192.168.x.x (家庭/路由最常见) -> 300
+    10.x.x.x (企业私网)            -> 200
+    172.16~31.x.x (标准私网)      -> 100
+    其他合规私网                  -> 50
+    """
+    if ip_str.startswith("192.168."):
+        return 300
+    if ip_str.startswith("10."):
+        return 200
+    try:
+        ip = ipaddress.ip_address(ip_str)
+        if ip in _RFC1918_172:
+            return 100
+    except Exception:
+        pass
+    return 50
+
+def get_local_lan_ip() -> str:
+    """
+    智能探测本机真实物理局域网 IP (AIR-63):
+    优先过滤 Clash/Mihomo/TUN/VMware/WSL 等虚拟网卡，确保返回手机与外部设备可真实访问的局域网地址。
+    """
+    # 策略 1：使用 psutil 详尽枚举真实物理网卡与活动状态
+    try:
+        import psutil
+        addrs = psutil.net_if_addrs()
+        stats = psutil.net_if_stats()
+        candidates: List[Tuple[int, str]] = []
+
+        for iface_name, addr_list in addrs.items():
+            # 过滤名称含虚拟关键字的网卡
+            if _is_virtual_iface_name(iface_name):
+                continue
+            # 过滤未连接或禁用的网卡 (isup == False)
+            stat = stats.get(iface_name)
+            if stat and not stat.isup:
+                continue
+
+            for a in addr_list:
+                if a.family == socket.AF_INET:
+                    ip_candidate = a.address
+                    if _is_valid_lan_ipv4(ip_candidate):
+                        score = _ip_priority_score(ip_candidate)
+                        candidates.append((score, ip_candidate))
+
+        if candidates:
+            # 按评分从高到低排序，返回最高分 IP
+            candidates.sort(key=lambda x: x[0], reverse=True)
+            return candidates[0][1]
+    except Exception:
+        pass
+
+    # 策略 2：通过主机名枚举解析全部绑定 IP 并过滤评分
+    try:
+        hostname = socket.gethostname()
+        _, _, ip_list = socket.gethostbyname_ex(hostname)
+        host_candidates: List[Tuple[int, str]] = []
+        for ip_cand in ip_list:
+            if _is_valid_lan_ipv4(ip_cand):
+                score = _ip_priority_score(ip_cand)
+                host_candidates.append((score, ip_cand))
+        if host_candidates:
+            host_candidates.sort(key=lambda x: x[0], reverse=True)
+            return host_candidates[0][1]
+    except Exception:
+        pass
+
+    # 策略 3：传统无连接 UDP 路由寻路保底（若返回黑名单网段则弃用）
+    s = None
+    try:
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        s.settimeout(0.5)
+        s.connect(("10.255.255.255", 1))
+        ip = s.getsockname()[0]
+        if ip and _is_valid_lan_ipv4(ip):
+            return ip
+    except Exception:
+        pass
+    finally:
+        if s:
+            try:
+                s.close()
+            except Exception:
+                pass
+
+    return "127.0.0.1"
+
+def get_log_size_info() -> Dict[str, Any]:
+    log_file = os.path.join(get_log_dir(), "gateway_app.log")
+    if os.path.exists(log_file):
+        try:
+            size_bytes = os.path.getsize(log_file)
+            if size_bytes < 1024:
+                human = f"{size_bytes} B"
+            elif size_bytes < 1024 * 1024:
+                human = f"{size_bytes / 1024:.1f} KB"
+            else:
+                human = f"{size_bytes / (1024 * 1024):.2f} MB"
+            return {"bytes": size_bytes, "human": human, "path": log_file}
+        except Exception:
+            pass
+    return {"bytes": 0, "human": "0 KB", "path": log_file}
+
+def clear_runtime_log() -> bool:
+    log_file = os.path.join(get_log_dir(), "gateway_app.log")
+    try:
+        with open(log_file, "w", encoding="utf-8") as f:
+            f.truncate(0)
+        return True
+    except Exception as e:
+        _log(f"清理日志失败: {e}")
+        return False
+
+def handle_open_folder(target: str) -> Tuple[bool, str]:
+    if sys.platform != "win32" or not hasattr(os, "startfile"):
+        return False, "当前操作系统不支持快捷打开文件夹"
+    target_map = {
+        "data": DATA_DIR,
+        "logs": get_log_dir()
+    }
+    dest = target_map.get(target)
+    if not dest:
+        return False, "非法目录目标 (仅允许 data 或 logs)"
+    try:
+        os.makedirs(dest, exist_ok=True)
+        os.startfile(dest)
+        return True, "OK"
+    except Exception as e:
+        return False, f"打开文件夹异常: {e}"
+
 def parse_semver(ver_str: Any) -> tuple:
-    """提取 SemVer 版本号数字元组 (major, minor, patch)，彻底杜绝字符串字典序倒挂与前缀漏洞"""
+    """提取 SemVer 版本号数字元组 (major, minor, patch)。
+    严格三段数字边界匹配，彻底杜绝字典序倒挂与 1.2.9x 等非法版本混入。
+    解析失败返回 (0, 0, 0)。
+    """
     if not ver_str or not isinstance(ver_str, str):
         return (0, 0, 0)
-    nums = re.findall(r'\d+', ver_str)
-    return tuple(map(int, nums[:3])) if nums else (0, 0, 0)
+    s = ver_str.strip()
+    # 严格匹配三段式数字版本号，三段之间必须有点，且第三段必须在合法边界 ($ 或 - 或 + 或 _) 结束，
+    # 禁止 1.2.9x 等非标后缀直接粘连在数字后
+    m = re.search(r'(?:^|[vV]|[\-_])(\d+)\.(\d+)\.(\d+)(?:$|[\-_+].*)', s)
+    if not m:
+        return (0, 0, 0)
+    try:
+        return (int(m.group(1)), int(m.group(2)), int(m.group(3)))
+    except Exception:
+        return (0, 0, 0)
+
+
+def extract_trusted_device_id(slot_info: Optional[Dict[str, Any]]) -> Optional[str]:
+    """提取可信的设备物理稳定身份。
+    只接受新鲜且合规的 14-17 位纯数字 IMEI (统一添加 imei: 前缀)；
+    严禁从 slot、COM 口、unknown 或空串回退！
+    """
+    if not slot_info or not isinstance(slot_info, dict):
+        return None
+    raw_imei = slot_info.get("imei")
+    if not raw_imei or not isinstance(raw_imei, str):
+        return None
+    cleaned = raw_imei.strip()
+    if re.fullmatch(r"^\d{14,17}$", cleaned):
+        return f"imei:{cleaned}"
+    return None
+
+
+def get_effective_fota_bundle_dir(bundle_dir: Optional[str] = None) -> Optional[str]:
+    """获取随附发布包实际资源目录 (纯函数参数优先，无环境变量或全局覆盖捷径)"""
+    if bundle_dir:
+        return bundle_dir if os.path.exists(bundle_dir) else None
+    if luadb_packer and hasattr(luadb_packer, "get_fota_bundle_dir"):
+        return luadb_packer.get_fota_bundle_dir()
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        return os.path.join(meipass, "fota_bundle") if meipass else None
+    return os.path.join(HOST_GATEWAY_DIR, "fota_bundle")
+
+
+def evaluate_upgrade_gate(slot_info: Optional[Dict[str, Any]], bundle_dir: Optional[str] = None) -> Dict[str, Any]:
+    """
+    统一评估固件更新门禁状态与随附包兼容性 (AIR-38 / v4 规范定向加固)。
+    适配判定严格 fail closed：
+    1. 随附包清单完整校验；
+    2. 设备稳定身份必须为新鲜且可信的 IMEI；
+    3. 型号必须精确匹配目标 models（禁止双向子串/前缀匹配）；
+    4. 芯片架构必须明确且等于目标 chip（禁止 BSP 猜测）；
+    5. 底层内核版本必须明确且在目标清单内（禁止缺字段跳过）；
+    6. serial_ota 能力描述必须符合 interface-contract-v1 rev2 规范与必要字段；
+    7. 数字版本比对（1.2.9x 等非法版本解析失败保留未知）；
+    8. 随附包较新时因 v3 执行链未经验收始终返回 host_not_ready 且 can_install=False。
+    """
+    effective_dir = bundle_dir or get_effective_fota_bundle_dir()
+    pkg_status, pkg_data, pkg_err = "no_package", None, "未检测到上位机随附更新包"
+    if luadb_packer and hasattr(luadb_packer, "load_bundled_release_package"):
+        pkg_status, pkg_data, pkg_err = luadb_packer.load_bundled_release_package(effective_dir)
+    elif effective_dir and os.path.exists(effective_dir):
+        if luadb_packer and hasattr(luadb_packer, "load_release_package"):
+            try:
+                pkg_data = luadb_packer.load_release_package(effective_dir)
+                pkg_status, pkg_err = "ok", None
+            except Exception as e:
+                pkg_status, pkg_err = "invalid_package", str(e)
+        else:
+            pkg_status, pkg_err = "error", "打包器组件不可用"
+    else:
+        pkg_status, pkg_err = "no_package", "未检测到上位机随附更新包"
+
+    if pkg_status == "no_package":
+        return {
+            "check_state": "no_package",
+            "reason": "未检测到上位机随附更新包",
+            "can_install": False,
+            "package_version": None,
+            "package_id": None,
+            "changelog": "",
+            "size_kb": None,
+            "target_manifest": None,
+        }
+    if pkg_status == "invalid_package":
+        return {
+            "check_state": "invalid_package",
+            "reason": f"随附更新包校验失败: {pkg_err}",
+            "can_install": False,
+            "package_version": None,
+            "package_id": None,
+            "changelog": "",
+            "size_kb": None,
+            "target_manifest": None,
+        }
+    if pkg_status != "ok" or not pkg_data:
+        return {
+            "check_state": "error",
+            "reason": pkg_err or "读取随附更新包发生异常",
+            "can_install": False,
+            "package_version": None,
+            "package_id": None,
+            "changelog": "",
+            "size_kb": None,
+            "target_manifest": None,
+        }
+
+    manifest = pkg_data.get("manifest", {})
+    pkg_version = manifest.get("version")
+    pkg_id = manifest.get("package_id")
+    pkg_changelog = manifest.get("changelog", "")
+    pkg_size_bytes = (manifest.get("sota", {}) or {}).get("size") or (manifest.get("script", {}) or {}).get("size") or 0
+    pkg_size_kb = round(pkg_size_bytes / 1024, 1) if pkg_size_bytes else 0.0
+    pkg_target = manifest.get("target", {})
+    pkg_tuple = parse_semver(pkg_version)
+
+    # 1. 设备在线核验 (严格只接受 online is True，缺失/None/False 均为 unknown_device)
+    if not slot_info or not isinstance(slot_info, dict) or slot_info.get("online") is not True:
+        return {
+            "check_state": "unknown_device",
+            "reason": "设备离线或在线状态异常 (online 状态非 True)",
+            "can_install": False,
+            "package_version": pkg_version,
+            "package_id": pkg_id,
+            "changelog": pkg_changelog,
+            "size_kb": pkg_size_kb,
+            "target_manifest": manifest,
+        }
+
+    # 2. 设备稳定物理身份核验（只用可信 IMEI，缺失或格式错误判定为 unknown_device）
+    device_id = extract_trusted_device_id(slot_info)
+    if not device_id:
+        return {
+            "check_state": "unknown_device",
+            "reason": "未能获取设备可信稳定身份 (缺少有效 14-17 位纯数字 IMEI)",
+            "can_install": False,
+            "package_version": pkg_version,
+            "package_id": pkg_id,
+            "changelog": pkg_changelog,
+            "size_kb": pkg_size_kb,
+            "target_manifest": manifest,
+        }
+
+    # 3. 固件版本解析与有效性（无法解析则未知，1.2.9x 不得误判）
+    current_ver = str(slot_info.get("version") or "").strip()
+    cur_tuple = parse_semver(current_ver)
+    if not current_ver or cur_tuple == (0, 0, 0):
+        return {
+            "check_state": "unknown_device",
+            "reason": f"设备固件版本格式非法或无法识别: {current_ver or '空'}",
+            "can_install": False,
+            "package_version": pkg_version,
+            "package_id": pkg_id,
+            "changelog": pkg_changelog,
+            "size_kb": pkg_size_kb,
+            "target_manifest": manifest,
+        }
+
+    # 4. 状态优先级：优先数字版本比对 (equal / device_newer 立即阻断，不降级且不可安装)
+    if cur_tuple == pkg_tuple:
+        return {
+            "check_state": "equal",
+            "reason": "当前设备版本与随附包一致",
+            "can_install": False,
+            "package_version": pkg_version,
+            "package_id": pkg_id,
+            "changelog": pkg_changelog,
+            "size_kb": pkg_size_kb,
+            "target_manifest": manifest,
+        }
+
+    if cur_tuple > pkg_tuple:
+        return {
+            "check_state": "device_newer",
+            "reason": "当前设备版本较新，随附包较旧，不降级",
+            "can_install": False,
+            "package_version": pkg_version,
+            "package_id": pkg_id,
+            "changelog": pkg_changelog,
+            "size_kb": pkg_size_kb,
+            "target_manifest": manifest,
+        }
+
+    # 5. 随附包版本较新 (pkg_tuple > cur_tuple)：此时方行硬件/架构/能力严密适配判定
+    # 设备型号精确匹配 (严格相等，禁止双向子串/模糊包含)
+    device_model = slot_info.get("model")
+    if not device_model or not isinstance(device_model, str):
+        return {
+            "check_state": "unknown_device",
+            "reason": "未能获取设备型号信息",
+            "can_install": False,
+            "package_version": pkg_version,
+            "package_id": pkg_id,
+            "changelog": pkg_changelog,
+            "size_kb": pkg_size_kb,
+            "target_manifest": manifest,
+        }
+    target_models = pkg_target.get("models", [])
+    if device_model not in target_models:
+        return {
+            "check_state": "incompatible",
+            "reason": f"随附更新包不适用于此设备型号 (设备: {device_model}, 目标支持: {target_models})",
+            "can_install": False,
+            "package_version": pkg_version,
+            "package_id": pkg_id,
+            "changelog": pkg_changelog,
+            "size_kb": pkg_size_kb,
+            "target_manifest": manifest,
+        }
+
+    # 芯片架构精确匹配 (必须明确 Hub 上报 chip，禁止 BSP 猜测)
+    device_chip = slot_info.get("chip")
+    target_chip = str(pkg_target.get("chip") or "").lower()
+    if not device_chip or not isinstance(device_chip, str) or str(device_chip).strip().lower() != target_chip:
+        return {
+            "check_state": "incompatible",
+            "reason": f"设备芯片架构不匹配或未声明 (设备: {device_chip}, 目标要求: {target_chip})",
+            "can_install": False,
+            "package_version": pkg_version,
+            "package_id": pkg_id,
+            "changelog": pkg_changelog,
+            "size_kb": pkg_size_kb,
+            "target_manifest": manifest,
+        }
+
+    # 底层内核版本精确匹配 (必须明确上报 core_version 且在目标列表内，禁止缺字段跳过)
+    device_core = slot_info.get("core_version")
+    target_cores = pkg_target.get("core_versions", [])
+    if not device_core or not isinstance(device_core, str) or device_core not in target_cores:
+        return {
+            "check_state": "incompatible",
+            "reason": f"设备底层内核版本不匹配或未声明 (设备: {device_core}, 目标支持: {target_cores})",
+            "can_install": False,
+            "package_version": pkg_version,
+            "package_id": pkg_id,
+            "changelog": pkg_changelog,
+            "size_kb": pkg_size_kb,
+            "target_manifest": manifest,
+        }
+
+    # 串口 SOTA 安全更新能力描述校验 (interface-contract-v1 rev2)
+    sota_cap = slot_info.get("serial_ota")
+    if not sota_cap or not isinstance(sota_cap, dict):
+        return {
+            "check_state": "unsupported",
+            "reason": "设备未上报 serial_ota 安全更新能力描述",
+            "can_install": False,
+            "package_version": pkg_version,
+            "package_id": pkg_id,
+            "changelog": pkg_changelog,
+            "size_kb": pkg_size_kb,
+            "target_manifest": manifest,
+        }
+    if sota_cap.get("revision") != 2:
+        return {
+            "check_state": "unsupported",
+            "reason": f"设备 serial_ota 能力版本不符合安全规范 (当前: {sota_cap.get('revision')}, 要求: 2)",
+            "can_install": False,
+            "package_version": pkg_version,
+            "package_id": pkg_id,
+            "changelog": pkg_changelog,
+            "size_kb": pkg_size_kb,
+            "target_manifest": manifest,
+        }
+    timeouts = sota_cap.get("timeouts")
+    req_timeouts = {"start_ms", "chunk_ms", "init_ms", "write_ms", "reply_margin_ms", "reboot_ms"}
+    if not isinstance(timeouts, dict) or not req_timeouts.issubset(set(timeouts.keys())):
+        return {
+            "check_state": "unsupported",
+            "reason": "设备 serial_ota 能力超时参数缺失",
+            "can_install": False,
+            "package_version": pkg_version,
+            "package_id": pkg_id,
+            "changelog": pkg_changelog,
+            "size_kb": pkg_size_kb,
+            "target_manifest": manifest,
+        }
+    for k in sorted(list(req_timeouts)):
+        val = timeouts.get(k)
+        if type(val) is not int or val <= 0:
+            return {
+                "check_state": "unsupported",
+                "reason": f"设备 serial_ota 能力超时参数 {k} 非合法正整数 (当前值: {val!r})",
+                "can_install": False,
+                "package_version": pkg_version,
+                "package_id": pkg_id,
+                "changelog": pkg_changelog,
+                "size_kb": pkg_size_kb,
+                "target_manifest": manifest,
+            }
+    max_pkg_bytes = sota_cap.get("max_package_bytes")
+    if type(max_pkg_bytes) is not int or max_pkg_bytes <= 0:
+        return {
+            "check_state": "unsupported",
+            "reason": f"设备 serial_ota 能力 max_package_bytes 非合法正整数 (当前值: {max_pkg_bytes!r})",
+            "can_install": False,
+            "package_version": pkg_version,
+            "package_id": pkg_id,
+            "changelog": pkg_changelog,
+            "size_kb": pkg_size_kb,
+            "target_manifest": manifest,
+        }
+    if pkg_size_bytes > max_pkg_bytes:
+        return {
+            "check_state": "unsupported",
+            "reason": f"随附包大小超出设备支持上限 ({pkg_size_bytes} > {max_pkg_bytes})",
+            "can_install": False,
+            "package_version": pkg_version,
+            "package_id": pkg_id,
+            "changelog": pkg_changelog,
+            "size_kb": pkg_size_kb,
+            "target_manifest": manifest,
+        }
+
+    # 维护占用判定 (busy)
+    with flashing_lock:
+        if flashing_state.get("is_flashing"):
+            return {
+                "check_state": "busy",
+                "reason": f"已有卡槽 [{flashing_state.get('slot')}] 正在执行维护或烧录任务，请稍候",
+                "can_install": False,
+                "package_version": pkg_version,
+                "package_id": pkg_id,
+                "changelog": pkg_changelog,
+                "size_kb": pkg_size_kb,
+                "target_manifest": manifest,
+            }
+
+    # 6. v3 安全升级执行链未经验收前始终阻断，绝不 available，can_install 恒为 False
+    return {
+        "check_state": "host_not_ready",
+        "reason": "上位机安全更新功能尚未就绪",
+        "can_install": False,
+        "package_version": pkg_version,
+        "package_id": pkg_id,
+        "changelog": pkg_changelog,
+        "size_kb": pkg_size_kb,
+        "target_manifest": manifest,
+    }
 
 # 引入 Hub 的渠道测试函数与分舱存储引擎
 from gateway_hub import test_channel_push
@@ -149,6 +756,26 @@ class HubBackendClient:
         # 方案 D: 读取本地内部免检 Session Token
         self.internal_session_token = ""
         self._load_session_token()
+
+        # 活跃度上报与防抖 (AIR-64)
+        self._last_touch_time: float = 0.0
+
+    def touch_activity(self, active_sse_count: Optional[int] = None, force: bool = False):
+        """向底层通信中枢同步活跃状态，带 3.0s 本地防抖 (AIR-64)"""
+        now = time.time()
+        if not force and active_sse_count is None and (now - getattr(self, "_last_touch_time", 0.0) < 3.0):
+            return
+        self._last_touch_time = now
+        params = {}
+        if active_sse_count is not None:
+            params["active_sse_count"] = int(active_sse_count)
+
+        def _bg_touch():
+            try:
+                self.execute_cmd("touch_activity", params=params, timeout=1.0)
+            except Exception:
+                pass
+        threading.Thread(target=_bg_touch, daemon=True).start()
 
     def _load_session_token(self):
         """读取 Hub 生成在本地数据目录的内部免检令牌"""
@@ -266,30 +893,23 @@ class HubBackendClient:
         if all_fetched:
             _log(f"[{slot_id}] 成功拉取脱机短信 {len(all_fetched)} 条，增量写入本地 ICCID 分舱权威存储...")
             comp = self.storage_mgr.get_compartment(iccid)
+            duplicate_rows = {}
             for it in all_fetched:
                 sender = it.get("from") or it.get("sender") or it.get("phone") or "未知号码"
                 content = it.get("content", "")
                 raw_time = it.get("time") or it.get("ts") or ""
-                ts = it.get("timestamp")
+                numeric_raw_time = raw_time if (isinstance(raw_time, (int, float)) or
+                                                (isinstance(raw_time, str) and raw_time.strip().isdigit())) else None
+                ts = _event_unix_seconds(it.get("timestamp"))
                 if ts is None:
-                    if isinstance(raw_time, (int, float)) and raw_time > 1000000000:
-                        ts = float(raw_time)
-                        time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
-                    elif isinstance(raw_time, str) and len(raw_time) >= 19:
-                        try:
-                            ts = time.mktime(time.strptime(raw_time[:19], "%Y-%m-%d %H:%M:%S"))
-                            time_str = raw_time[:19]
-                        except Exception:
-                            ts = time.time()
-                            time_str = raw_time
-                    else:
-                        ts = time.time()
-                        time_str = time.strftime("%Y-%m-%d %H:%M:%S")
-                else:
-                    ts = float(ts)
-                    time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts)) if ts > 1000000000 else str(raw_time)
+                    ts = _event_unix_seconds(numeric_raw_time)
+                time_str = (time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(ts))
+                            if ts is not None else str(raw_time))
 
-                msg_id = it.get("id") or f"{slot_id}_{int(float(ts)*1000)}"
+                row_bytes = json.dumps(it, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+                row_digest = hashlib.sha256(row_bytes).hexdigest()
+                duplicate_rows[row_digest] = duplicate_rows.get(row_digest, 0) + 1
+                msg_id = it.get("id") or f"board_{row_digest}_{duplicate_rows[row_digest]}"
                 if comp.is_deleted(msg_id, sender, content, raw_time):
                     continue
 
@@ -301,9 +921,10 @@ class HubBackendClient:
                     "sender": sender,
                     "content": content,
                     "otp": it.get("code") or it.get("otp") or "",
-                    "time": time_str,
-                    "timestamp": float(ts)
+                    "time": time_str
                 }
+                if ts is not None:
+                    msg_obj["timestamp"] = ts
                 comp.append_message(msg_obj)
 
             # 2PC 确认清理：上位机落盘成功后，下发 clear_history 让板端 LittleFS 恢复 0 占用
@@ -316,7 +937,7 @@ class HubBackendClient:
         if not self._ensure_connected():
             return {"ok": False, "error": "无法连接底层通信中枢"}
 
-        req_id = f"web_{int(time.time()*1000)}_{os.getpid()}"
+        req_id = f"web_{uuid.uuid4().hex}"
         evt = threading.Event()
         req_entry = {"event": evt, "response": None, "wait_terminal": wait_terminal, "cmd": cmd_name}
 
@@ -354,6 +975,9 @@ class HubBackendClient:
         except Exception as e:
             with self.pending_lock:
                 self.pending_requests.pop(req_id, None)
+            if cmd_name == "send_sms":
+                return {"ok": False, "code": "unknown", "id": req_id,
+                        "error": "短信请求写入中断，可能已被设备收到；结果未知，请勿重复发送"}
             return {"ok": False, "error": f"指令写入套接字失败: {e}"}
 
         # 同步等待响应
@@ -371,6 +995,9 @@ class HubBackendClient:
                     "error": f"短信已进入发送队列，但在 {timeout}s 内未收到基站终态回执",
                     "data": {"reason": "modem_result_timeout"}
                 }
+            if cmd_name == "send_sms":
+                return {"ok": False, "code": "unknown", "id": req_id,
+                        "error": "短信请求已提交但未收到设备回执，结果未知；请勿重复发送"}
             return {"ok": False, "error": f"等待设备响应超时 ({timeout}s)"}
 
     def _rx_loop(self):
@@ -627,8 +1254,11 @@ class HubBackendClient:
             elif event_name in ("sms_rx", "sms_received"):
                 self.is_hardware_connected = True
                 raw_time = event_data.get("time") or event_data.get("ts")
-                if isinstance(raw_time, (int, float)) and raw_time > 1000000000:
-                    time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(raw_time))
+                sms_timestamp = _event_unix_seconds(event_data.get("timestamp"))
+                if sms_timestamp is None:
+                    sms_timestamp = _event_unix_seconds(raw_time)
+                if sms_timestamp is not None:
+                    time_str = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(sms_timestamp))
                 elif raw_time:
                     time_str = str(raw_time)
                 else:
@@ -657,6 +1287,7 @@ class HubBackendClient:
                     "content": event_data.get("content") or "",
                     "otp": event_data.get("code") or event_data.get("otp"),
                     "time": time_str,
+                    "timestamp": sms_timestamp,
                     "operator": badge_info["operator"],
                     "display_badge": badge_info["display_badge"],
                     "slot_display": badge_info["display_badge"],
@@ -668,7 +1299,8 @@ class HubBackendClient:
                     comp = self.storage_mgr.get_compartment(active_iccid)
                     storage_item = dict(item)
                     storage_item["id"] = event_data.get("id") or event_data.get("msg_id") or f"{evt_slot}_{int(time.time()*1000)}"
-                    storage_item["timestamp"] = time.time()
+                    if sms_timestamp is None:
+                        storage_item.pop("timestamp", None)
                     storage_item["iccid"] = active_iccid
                     comp.append_message(storage_item)
                 except Exception as e:
@@ -760,8 +1392,10 @@ class HubBackendClient:
                     if s.get("slot") == slot:
                         curr_slot_info = s
                         break
-            mod = (curr_slot_info.get("model") or curr_slot_info.get("bsp") or "").upper()
-            chip_type = "ec618" if ("780E" in mod and "EPV" not in mod) or "618" in mod or "700E" in mod else "ec718"
+            mod = (curr_slot_info.get("model") or curr_slot_info.get("bsp") or "")
+            chip_hint = curr_slot_info.get("chip") or (curr_slot_info.get("capabilities", {}) or {}).get("chip")
+            detected_chip = firmware_flasher.normalize_chip_type(mod, chip_hint)
+            chip_type = "ec618" if detected_chip == "ec618" else "ec718"
 
             raw_luadb = luadb_packer.pack_luadb(target_version=target_ver)
             sota_bytes, meta = luadb_packer.pack_sota_package(raw_luadb, target_version=target_ver, chip_type=chip_type)
@@ -881,6 +1515,141 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
 
+    @staticmethod
+    def _is_loopback_client(client_ip: Optional[str]) -> bool:
+        """严格判定是否为本机回环流量（全面覆盖 IPv4、IPv6 及 Windows 双栈 ::ffff:127.x.x.x）"""
+        if not client_ip:
+            return False
+        if client_ip in ("127.0.0.1", "::1", "localhost", "testclient") or client_ip.startswith("127."):
+            return True
+        if client_ip.startswith("::ffff:127."):
+            return True
+        try:
+            return ipaddress.ip_address(client_ip).is_loopback
+        except (ValueError, TypeError):
+            return False
+
+    def _check_client_security(self) -> bool:
+        """核验客户端访问权限：内聚在 Web 服务层，守死 do_GET 与 do_POST 双入口"""
+        client_ip = self.client_address[0] if (self.client_address and len(self.client_address) > 0) else None
+        if not client_ip:
+            self._send_forbidden_lan_response()
+            return False
+
+        # 1. 本机流量永远拥有最高特权，直接放行 (防误锁死看门狗)
+        if self._is_loopback_client(client_ip):
+            return True
+
+        # 2. 外部局域网客户端：从底层 HTTP 服务器实例读取开关状态
+        lan_enabled = getattr(self.server, "lan_access_enabled", False)
+        if not lan_enabled:
+            self._send_forbidden_lan_response()
+            return False
+
+        return True
+
+    def _send_forbidden_lan_response(self):
+        """向未授权的局域网外部客户端返回大白话 403 页面或 JSON 响应，并附带 CORS 标头"""
+        parsed = urlparse(self.path)
+        path = parsed.path
+        if path.startswith("/api/"):
+            data = {
+                "ok": False,
+                "error": "forbidden",
+                "message": "🔒 局域网跨设备访问已在控制台关闭。如需在手机上查看验证码，请在电脑本机控制台打开【系统设置】开启「允许同局域网跨设备访问」。"
+            }
+            self._send_json_resp(403, data)
+            return
+
+        html_content = """<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>局域网跨设备访问已关闭 - CellHive 数字蜂巢</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      background-color: #0b0f19;
+      color: #f8fafc;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 1.5rem;
+    }
+    .card {
+      background: #1e293b;
+      border: 1px solid rgba(255, 255, 255, 0.1);
+      border-radius: 12px;
+      padding: 2rem;
+      max-width: 480px;
+      width: 100%;
+      text-align: center;
+      box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.5), 0 8px 10px -6px rgba(0, 0, 0, 0.5);
+    }
+    .icon {
+      font-size: 3rem;
+      margin-bottom: 1rem;
+      line-height: 1;
+    }
+    h1 {
+      font-size: 1.25rem;
+      font-weight: 700;
+      color: #f8fafc;
+      margin-bottom: 0.75rem;
+    }
+    p {
+      font-size: 0.875rem;
+      color: #94a3b8;
+      line-height: 1.6;
+      margin-bottom: 1.25rem;
+    }
+    .badge {
+      display: inline-block;
+      background: rgba(239, 68, 68, 0.15);
+      color: #f87171;
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      padding: 0.25rem 0.75rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      margin-bottom: 1rem;
+    }
+    .tips {
+      background: rgba(15, 23, 42, 0.6);
+      border-radius: 8px;
+      padding: 0.85rem;
+      font-size: 0.8rem;
+      color: #cbd5e1;
+      text-align: left;
+      line-height: 1.5;
+      border: 1px dashed rgba(255, 255, 255, 0.1);
+    }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="icon">🔒</div>
+    <div class="badge">403 访问受限 · 安全隔离</div>
+    <h1>局域网跨设备访问已在控制台关闭</h1>
+    <p>为保护您的短信与验证码高密隐私，避免同一 Wi-Fi 下的其他人偷窥，网关默认仅允许电脑本机访问。</p>
+    <div class="tips">
+      <strong>💡 如何在手机上开启：</strong><br>
+      请在插着网关的电脑上打开控制台，点击右上角【系统设置】，在「4. 局域网访问与跨设备协作」中开启<strong>「允许同局域网跨设备访问」</strong>开关并点击保存即可。
+    </div>
+  </div>
+</body>
+</html>"""
+        body = html_content.encode("utf-8")
+        self.send_response(403)
+        self._send_cors_headers()
+        self.send_header("Content-Type", "text/html; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def _send_json_resp(self, status_code: int, data: dict):
         body = json.dumps(data, ensure_ascii=False).encode("utf-8")
         self.send_response(status_code)
@@ -896,6 +1665,10 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_GET(self):
+        if not self._check_client_security():
+            return
+        if hasattr(self.backend, "touch_activity"):
+            self.backend.touch_activity()
         try:
             self._handle_get()
         except Exception as e:
@@ -930,13 +1703,35 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
                     self._send_json_resp(500, {"ok": False, "error": f"加载 index.html 失败: {e}"})
                     return
             else:
-                fallback_html = "<html><body><h1>Air780 智能通信网关</h1><p>Web 资源未找到</p></body></html>".encode("utf-8")
+                fallback_html = "<html><body><h1>数字蜂巢 · CellHive</h1><p>Web 资源未找到</p></body></html>".encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.send_header("Content-Length", str(len(fallback_html)))
                 self.end_headers()
                 self.wfile.write(fallback_html)
                 return
+
+        # 1.1 网站图标静态响应
+        if path == "/favicon.ico":
+            ico_path = os.path.join(WEB_DIR, "favicon.ico")
+            if not os.path.exists(ico_path):
+                ico_path = os.path.join(os.path.dirname(WEB_DIR), "app.ico")
+            if os.path.exists(ico_path):
+                try:
+                    with open(ico_path, "rb") as f:
+                        ico_content = f.read()
+                    self.send_response(200)
+                    self._send_cors_headers()
+                    self.send_header("Content-Type", "image/x-icon")
+                    self.send_header("Content-Length", str(len(ico_content)))
+                    self.end_headers()
+                    self.wfile.write(ico_content)
+                    return
+                except Exception:
+                    pass
+            self.send_response(204)
+            self.end_headers()
+            return
 
         # 2. SSE 实时事件推送流接口
         if path == "/api/events":
@@ -1123,12 +1918,21 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
             return
 
         # 7. 获取网关通用配置 (含通知与 MCP 开关)
+        if path == "/api/notify/results":
+            result = self.backend.execute_cmd("get_notify_results", timeout=3.0)
+            if result.get("ok"):
+                self._send_json_resp(200, {"ok": True, "data": result.get("data") or {}})
+            else:
+                self._send_json_resp(503, {"ok": False, "error": "后台通知记录暂不可用"})
+            return
+
         if path in ("/api/config", "/api/config/notify"):
             if os.path.exists(GATEWAY_CONFIG_PATH):
                 try:
                     with open(GATEWAY_CONFIG_PATH, "r", encoding="utf-8") as f:
                         cfg = json.load(f)
-                    self._send_json_resp(200, {"ok": True, "config": cfg, "data": cfg})
+                    public_cfg = _public_gateway_config(cfg)
+                    self._send_json_resp(200, {"ok": True, "config": public_cfg, "data": public_cfg})
                     return
                 except Exception as e:
                     self._send_json_resp(500, {"ok": False, "error": f"读取配置失败: {e}"})
@@ -1137,82 +1941,144 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
                 self._send_json_resp(200, {"ok": True, "config": {}, "data": {}})
             return
 
-        # 8. 获取固件版本与待更元数据信息 (AIR-29 / AIR-31 门禁加固)
+        # 7.1 获取系统运行环境、偏好与关于信息 (AIR-57)
+        if path == "/api/system/settings":
+            cfg_system = {}
+            if os.path.exists(GATEWAY_CONFIG_PATH):
+                try:
+                    with open(GATEWAY_CONFIG_PATH, "r", encoding="utf-8") as f:
+                        cfg = json.load(f)
+                    cfg_system = cfg.get("system", {}) if isinstance(cfg, dict) else {}
+                except Exception:
+                    pass
+
+            lan_ip = get_local_lan_ip()
+            log_info = get_log_size_info()
+            autostart_live = get_autostart_status()
+
+            web_port = DEFAULT_WEB_PORT
+            try:
+                web_port = self.server.server_port or DEFAULT_WEB_PORT
+            except Exception:
+                pass
+
+            # 探测 tools/mcp_server/server.py 绝对路径
+            # 候选1: 源码或 exe 目录同级的 tools/mcp_server/server.py
+            # 候选2: 从 dist 向上查找工程根目录下的 tools/mcp_server/server.py
+            exe_or_file_dir = os.path.dirname(os.path.abspath(sys.executable if getattr(sys, "frozen", False) else __file__))
+            candidate_paths = [
+                os.path.abspath(os.path.join(exe_or_file_dir, "..", "..", "..", "tools", "mcp_server", "server.py")),
+                os.path.abspath(os.path.join(exe_or_file_dir, "..", "..", "tools", "mcp_server", "server.py")),
+                os.path.abspath(os.path.join(exe_or_file_dir, "..", "mcp_server", "server.py")),
+                os.path.abspath(os.path.join(exe_or_file_dir, "tools", "mcp_server", "server.py"))
+            ]
+            mcp_py = ""
+            for cp in candidate_paths:
+                if os.path.isfile(cp):
+                    mcp_py = cp
+                    break
+            if not mcp_py:
+                mcp_py = candidate_paths[0]
+
+            daily_reboot_hour_val = 4
+            try:
+                raw_h = cfg_system.get("daily_reboot_hour", 4)
+                h = int(raw_h) if raw_h is not None else 4
+                daily_reboot_hour_val = h if 0 <= h <= 23 else 4
+            except (ValueError, TypeError):
+                daily_reboot_hour_val = 4
+
+            client_ip = self.client_address[0] if (self.client_address and len(self.client_address) > 0) else None
+            is_client_local = self._is_loopback_client(client_ip)
+            lan_access_enabled = bool(getattr(self.server, "lan_access_enabled", False))
+
+            settings_data = {
+                "version": APP_VERSION,
+                "build_type": "standalone_exe" if getattr(sys, "frozen", False) else "source",
+                "platform": "Windows" if sys.platform == "win32" else sys.platform,
+                "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+                "autostart": autostart_live,
+                "auto_copy_otp": bool(cfg_system.get("auto_copy_otp", True)),
+                "desktop_notification": bool(cfg_system.get("desktop_notification", True)),
+                "privacy_mode": bool(cfg_system.get("privacy_mode", False)),
+                "play_sound": bool(cfg_system.get("play_sound", True)),
+                "store_on_board": bool(cfg_system.get("store_on_board", False)),
+                "daily_reboot": bool(cfg_system.get("daily_reboot", False)),
+                "daily_reboot_hour": daily_reboot_hour_val,
+                "lan_access": lan_access_enabled,
+                "lan_access_enabled": lan_access_enabled,
+                "is_current_client_local": is_client_local,
+                "mcp_server_path": mcp_py.replace("\\", "/"),
+                "lan_ip": lan_ip,
+                "lan_url": f"http://{lan_ip}:{web_port}",
+                "is_local_only": lan_ip == "127.0.0.1",
+                "data_dir": DATA_DIR,
+                "log_dir": get_log_dir(),
+                "log_size_bytes": log_info["bytes"],
+                "log_size_human": log_info["human"]
+            }
+            self._send_json_resp(200, {"ok": True, "data": settings_data})
+            return
+
+        # 8. 获取固件版本与待更元数据信息 (AIR-38 / v4 门禁规范)
         if path == "/api/control/upgrade_info":
-            manifest = luadb_packer.get_version_manifest() if luadb_packer else {"version": "1.2.9", "changelog": "优化弱信号重连稳定性与长短信防重发", "size": 22400}
-            curr_slot_info = {}
-            with self.backend.cache_lock:
-                for s in self.backend.slots:
-                    if s.get("slot") == target_slot:
-                        curr_slot_info = s
-                        break
-            if not curr_slot_info:
-                resp = self.backend.execute_cmd("get_slots", timeout=1.5)
-                if resp.get("ok"):
-                    slots_data = resp.get("data", {}).get("slots", [])
-                    with self.backend.cache_lock:
-                        self.backend.slots = slots_data
-                    for s in slots_data:
-                        if s.get("slot") == target_slot:
-                            curr_slot_info = s
-                            break
-            current_ver = curr_slot_info.get("version") or ""
-            target_ver = manifest.get("version", "1.2.9")
-            model = curr_slot_info.get("model") or "Air780"
-            bsp = curr_slot_info.get("bsp") or model
+            # 每次强制向 Hub 请求新鲜 get_slots，失败返回安全的 unknown_device，不复用旧缓存
+            resp = self.backend.execute_cmd("get_slots", timeout=1.5)
+            if not resp or not isinstance(resp, dict) or not resp.get("ok"):
+                self._send_json_resp(200, {
+                    "ok": True,
+                    "check_state": "unknown_device",
+                    "reason": "向网关核心请求新鲜设备状态失败",
+                    "source": "bundled",
+                    "slot": target_slot,
+                    "device_id": None,
+                    "model": "未知",
+                    "current_version": None,
+                    "package_version": None,
+                    "package_id": None,
+                    "changelog": "",
+                    "size_kb": None,
+                    "can_install": False,
+                    "target_version": "",
+                    "has_update": False,
+                    "sota_supported": False,
+                    "tip": "向网关核心请求新鲜设备状态失败",
+                    "upgrade_method": "向网关核心请求新鲜设备状态失败"
+                })
+                return
 
-            # SemVer 严密数值判定：固件必须 >= 1.2.6 且支持串口 SOTA 协议栈
-            cur_tuple = parse_semver(current_ver)
-            target_tuple = parse_semver(target_ver)
-            sota_min_tuple = (1, 2, 6)
+            slots_data = resp.get("data", {}).get("slots", [])
+            curr_slot_info = None
+            for s in slots_data:
+                if isinstance(s, dict) and s.get("slot") == target_slot:
+                    curr_slot_info = s
+                    break
 
-            # 芯片架构匹配：当前 SOTA 包由 deploy/smart-gateway-780epv 生成，针对 EC718PV 架构
-            is_epv = "EPV" in model.upper() or "EC718" in bsp.upper() or "EPV" in bsp.upper()
-
-            if cur_tuple == (0, 0, 0) or not current_ver:
-                sota_supported = False
-                has_update = False
-                upgrade_method = "无法热更 (未检测到固件版本)"
-                tip = "未读取到模组固件版本，请确认设备是否正常在线"
-            elif cur_tuple >= target_tuple:
-                # 已是最新固件（或更高版本），无论什么芯片架构，绝不谎报 has_update
-                has_update = False
-                if is_epv:
-                    sota_supported = True
-                    upgrade_method = "本地串口极速热更 (已是最新固件)"
-                    tip = ""
-                else:
-                    sota_supported = False
-                    upgrade_method = f"已是最新版本 ({model} 专属固件)"
-                    tip = f"当前模组为 {model} (EC618 纯数传平台)，已运行最新专属固件 v{current_ver}。如需重装请使用【重新刷机控制台】。"
-            elif cur_tuple < sota_min_tuple:
-                sota_supported = False
-                has_update = True
-                upgrade_method = "物理线刷 (旧版本固件需首次线刷)"
-                tip = f"当前固件 (v{current_ver}) 较早，尚未内置串口极速热更桩。请使用【重新刷机控制台】升级至最新版。"
-            elif not is_epv and "780E" in model.upper():
-                sota_supported = False
-                has_update = True
-                upgrade_method = "物理线刷 (芯片平台专属镜像)"
-                tip = f"检测到新版本 v{target_ver}。当前模组为 {model} (EC618 纯数传平台)，与 EPV 在线热更镜像互斥，请使用【重新刷机控制台】线刷更新。"
-            else:
-                sota_supported = True
-                has_update = True
-                upgrade_method = "本地串口极速热更 (0流量·保留所有短信)"
-                tip = ""
+            gate_res = evaluate_upgrade_gate(curr_slot_info)
+            device_id = extract_trusted_device_id(curr_slot_info)
+            current_ver = curr_slot_info.get("version") if curr_slot_info else None
+            model = curr_slot_info.get("model") if curr_slot_info else "未知"
 
             self._send_json_resp(200, {
                 "ok": True,
+                "check_state": gate_res["check_state"],
+                "reason": gate_res["reason"],
+                "source": "bundled",
                 "slot": target_slot,
-                "model": model,
-                "current_version": current_ver or "未知",
-                "target_version": target_ver,
-                "has_update": has_update,
-                "sota_supported": sota_supported,
-                "tip": tip,
-                "changelog": manifest.get("changelog", "常规稳定性优化"),
-                "size_kb": round(manifest.get("size", 22400) / 1024, 1),
-                "upgrade_method": upgrade_method
+                "device_id": device_id,
+                "model": model or "未知",
+                "current_version": current_ver,
+                "package_version": gate_res["package_version"],
+                "package_id": gate_res["package_id"],
+                "changelog": gate_res["changelog"],
+                "size_kb": gate_res["size_kb"],
+                "can_install": gate_res["can_install"],
+                # 兼容旧前端字段
+                "target_version": gate_res["package_version"] or "",
+                "has_update": (gate_res["check_state"] == "available" and gate_res["can_install"]),
+                "sota_supported": (gate_res["check_state"] not in ("unsupported", "incompatible")),
+                "tip": gate_res["reason"],
+                "upgrade_method": gate_res["reason"],
             })
             return
 
@@ -1228,7 +2094,7 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
         reason = data_sec.get("reason", "")
 
         if code == -409 or msg == "SMS_RESULT_UNKNOWN" or reason == "previous_modem_result_pending":
-            return "上一条短信发送结果未决，设备已处于保护状态，请稍后重试或重置状态"
+            return "上一条短信发送结果未决，设备已保护发送；请先核对原尝试，勿直接重试或重置"
         if code == -429 or msg == "QUEUE_FULL":
             return "短信发送队列已满，请等待前序短信处理完成"
         if code == -101 or msg == "PARAM_ERR":
@@ -1243,6 +2109,10 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
         return resp.get("error") or msg or reason or f"请求失败 (错误码: {code})"
 
     def do_POST(self):
+        if not self._check_client_security():
+            return
+        if hasattr(self.backend, "touch_activity"):
+            self.backend.touch_activity()
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
@@ -1302,12 +2172,13 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
                 self._send_json_resp(200, {
                     "ok": True,
                     "slot": used_slot,
-                    "status": "routed" if dry_run else ("sent" if resp.get("msg") in ("SENT_OK", "SENT") else "queued"),
+                    "status": "routed" if dry_run else ("submitted" if resp.get("msg") in ("SENT_OK", "SENT") else "queued"),
+                    "request_id": resp.get("id"),
                     "strategy": resp.get("routed_strategy") or strategy,
                     "fallback": resp.get("fallback_used", False),
                     "panic_mode": resp.get("panic_mode", False),
-                    "msg": resp.get("msg", "SENT_OK"),
-                    "data": resp.get("data")
+                    "msg": "SUBMITTED" if resp.get("msg") in ("SENT_OK", "SENT") else resp.get("msg", "UNKNOWN"),
+                    "data": {"accepted": True} if resp.get("msg") in ("SENT_OK", "SENT") else resp.get("data")
                 })
             else:
                 err_msg = self._format_error_message(resp)
@@ -1384,7 +2255,7 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
                     "slot": used_slot,
                     "status": "DIALING",
                     "timeout": timeout_sec,
-                    "msg": f"正在向 {phone} 发起 VoLTE 呼叫，{timeout_sec}秒后自动挂断（防扣费）",
+                    "msg": f"正在向 {phone} 发起 VoLTE 呼叫，{timeout_sec}秒后自动挂断",
                     "data": resp.get("data")
                 })
             else:
@@ -1436,83 +2307,120 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
             })
             return
 
-        # 10. 串口分块平滑热更 (AIR-29 Serial SOTA / AIR-31 门禁防呆)
+        # 10. 串口分块平滑热更 (AIR-38 / v4 门禁安全链)
         if path == "/api/control/upgrade_script":
-            action_slot = target_slot
+            data = body or {}
+            action_slot = data.get("slot") or target_slot
+            expected_device_id = data.get("expected_device_id")
+            req_package_id = data.get("package_id")
 
-            curr_slot_info = {}
-            with self.backend.cache_lock:
-                for s in self.backend.slots:
-                    if s.get("slot") == action_slot:
-                        curr_slot_info = s
-                        break
-            current_ver = curr_slot_info.get("version") or ""
-            model = curr_slot_info.get("model") or "Air780"
-            bsp = curr_slot_info.get("bsp") or model
-            cur_tuple = parse_semver(current_ver)
-
-            # 校验版本是否支持串口热更
-            if cur_tuple < (1, 2, 6):
+            # 1. 每次必须向 Hub 请求新鲜 get_slots，读取失败直接拒绝，不复用旧缓存
+            resp = self.backend.execute_cmd("get_slots", timeout=1.5)
+            if not resp or not isinstance(resp, dict) or not resp.get("ok"):
                 self._send_json_resp(400, {
                     "ok": False,
-                    "error": f"模组固件版本 (v{current_ver or '未知'}) 较早，尚未内置串口极速热更协议桩，请使用【重新刷机控制台】升级底座固件",
+                    "check_state": "unknown_device",
+                    "error": "向网关核心请求新鲜设备状态失败，请确认设备是否在线",
+                    "reason": "向网关核心请求新鲜设备状态失败",
                     "slot": action_slot
                 })
                 return
 
+            slots_data = resp.get("data", {}).get("slots", [])
+            curr_slot_info = None
+            for s in slots_data:
+                if isinstance(s, dict) and s.get("slot") == action_slot:
+                    curr_slot_info = s
+                    break
+
+            if not curr_slot_info or curr_slot_info.get("online") is not True:
+                self._send_json_resp(400, {
+                    "ok": False,
+                    "check_state": "unknown_device",
+                    "error": "设备离线或在线状态异常 (online 状态非 True)",
+                    "reason": "设备离线或在线状态异常",
+                    "slot": action_slot
+                })
+                return
+
+            # 2. 核验新鲜且可信的设备稳定物理身份 (IMEI)
+            actual_device_id = extract_trusted_device_id(curr_slot_info)
+            if not actual_device_id:
+                self._send_json_resp(400, {
+                    "ok": False,
+                    "check_state": "unknown_device",
+                    "error": "设备稳定物理身份缺失 (缺少有效 IMEI)，安装已阻断",
+                    "reason": "设备稳定物理身份缺失",
+                    "slot": action_slot
+                })
+                return
+
+            if not expected_device_id or str(expected_device_id).strip() != actual_device_id:
+                self._send_json_resp(400, {
+                    "ok": False,
+                    "check_state": "unknown_device",
+                    "error": f"设备身份已发生变化或不匹配 (预期: {expected_device_id}, 实际: {actual_device_id})，安装已阻断",
+                    "reason": "设备身份已发生变化 (换设备)",
+                    "slot": action_slot
+                })
+                return
+
+            # 3. 检查任务忙态 (busy)
             with flashing_lock:
-                if flashing_state["is_flashing"]:
+                if flashing_state.get("is_flashing"):
                     self._send_json_resp(423, {
                         "ok": False,
-                        "error": f"已有卡槽 [{flashing_state['slot']}] 正在烧录升级中，请稍候...",
-                        "state": flashing_state
+                        "check_state": "busy",
+                        "error": f"已有卡槽 [{flashing_state.get('slot')}] 正在烧录升级中，请稍候...",
+                        "reason": f"已有卡槽 [{flashing_state.get('slot')}] 正在烧录升级中，请稍候...",
+                        "slot": action_slot
                     })
                     return
-                flashing_state["is_flashing"] = True
-                flashing_state["slot"] = action_slot
-                flashing_state["percent"] = 5
-                flashing_state["status"] = "starting_ota"
-                flashing_state["stage"] = "starting"
-                flashing_state["error"] = None
-                flashing_state["start_time"] = time.time()
 
-            def _ota_worker(slot_to_upgrade):
-                def _cb(pct, status_text, stage="flashing"):
-                    update_flashing_progress(pct, status_text, stage=stage, slot=slot_to_upgrade)
-                    self.backend.broadcast_sse("flash_progress", {
-                        "slot": slot_to_upgrade,
-                        "percent": pct,
-                        "status": status_text,
-                        "stage": stage,
-                        "mode": "serial_sota"
-                    })
+            # 4. 门禁全量校验 (重新校验包、版本、兼容性与安全能力)
+            gate_res = evaluate_upgrade_gate(curr_slot_info)
 
-                res = self.backend.perform_serial_ota(slot=slot_to_upgrade, progress_cb=_cb)
-                if not res.get("ok"):
-                    update_flashing_progress(0, "failed", stage="failed", error=res.get("error"), slot=slot_to_upgrade)
-                    self.backend.broadcast_sse("flash_progress", {
-                        "slot": slot_to_upgrade,
-                        "percent": 0,
-                        "status": "failed",
-                        "stage": "failed",
-                        "error": res.get("error")
-                    })
-                else:
-                    update_flashing_progress(100, "success", stage="success", slot=slot_to_upgrade)
-                    self.backend.broadcast_sse("flash_progress", {
-                        "slot": slot_to_upgrade,
-                        "percent": 100,
-                        "status": "success",
-                        "stage": "success",
-                        "target_version": res.get("target_version")
-                    })
+            # 核验 package_id 防换包
+            if not req_package_id:
+                self._send_json_resp(400, {
+                    "ok": False,
+                    "check_state": gate_res["check_state"],
+                    "error": "请求缺少 package_id 参数，请重新检查更新",
+                    "reason": "请求缺少 package_id 参数",
+                    "slot": action_slot
+                })
+                return
 
-            threading.Thread(target=_ota_worker, args=(action_slot,), daemon=True).start()
-            self._send_json_resp(200, {
-                "ok": True,
-                "slot": action_slot,
-                "msg": f"已成功启动卡槽 [{action_slot}] 串口平滑热更任务",
-                "status": "started"
+            if not gate_res["package_id"] or gate_res["package_id"] != req_package_id:
+                self._send_json_resp(400, {
+                    "ok": False,
+                    "check_state": gate_res["check_state"] if gate_res["check_state"] in ("no_package", "invalid_package") else "invalid_package",
+                    "error": f"更新包身份不匹配 (预期: {gate_res.get('package_id')}, 请求: {req_package_id})，安装已阻断",
+                    "reason": "更新包身份不匹配 (换包)",
+                    "slot": action_slot
+                })
+                return
+
+            # 5. 任何非 available 状态在服务端一律安全拒绝
+            if gate_res["check_state"] != "available" or not gate_res["can_install"]:
+                status_code = 423 if gate_res["check_state"] == "busy" else 400
+                self._send_json_resp(status_code, {
+                    "ok": False,
+                    "check_state": gate_res["check_state"],
+                    "error": gate_res["reason"],
+                    "reason": gate_res["reason"],
+                    "slot": action_slot
+                })
+                return
+
+            # 6. 核心安全底线：v3 安全升级执行链未经验收，不得调用旧执行器或现场打包逻辑！
+            # 绝对切断向 _ota_worker / perform_serial_ota 的调用，设备副作用严格为零！
+            self._send_json_resp(400, {
+                "ok": False,
+                "check_state": "host_not_ready",
+                "error": "上位机安全更新功能尚未就绪 (v3 安全执行链未经验收)",
+                "reason": "上位机安全更新功能尚未就绪",
+                "slot": action_slot
             })
             return
 
@@ -1521,36 +2429,52 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
             data = body or {}
             action_slot = data.get("slot") or target_slot
             req_port = data.get("port")
-            req_chip = data.get("chip_type") or data.get("chip")
+            req_chip = data.get("chip_type") or data.get("chip") or data.get("recommend_chip")
             req_mode = data.get("mode") or "script"  # 'script' 或 'full'
-            req_model = data.get("hardware_model")
+            req_model = data.get("model") or data.get("hardware_model")
+            is_unassigned = bool(data.get("is_unassigned") or action_slot in (None, "", "new_device"))
 
             curr_slot_info = {}
-            if action_slot:
+            if action_slot and action_slot != "new_device":
                 with self.backend.cache_lock:
                     for s in self.backend.slots:
                         if s.get("slot") == action_slot:
                             curr_slot_info = s
                             break
+            else:
+                action_slot = None
 
             target_port = req_port or curr_slot_info.get("port")
             model_bsp = req_model or curr_slot_info.get("model") or curr_slot_info.get("bsp") or ""
 
-            # 归一化芯片类型 (AIR-35: 彻底支持 EC718PV 与 EC618 双芯片架构)
+            # 归一化芯片类型 (AIR-44: 原生支持 EC718PV, EC718PM 与 EC618 三大芯片架构)
             import firmware_flasher
             chip_type = firmware_flasher.normalize_chip_type(model_bsp, req_chip)
 
-            def _cli_flash_worker(slot_id, port, chip, mode, model):
+            def _cli_flash_worker(slot_id, port, chip, mode, model, unassigned_flag):
                 self.backend.broadcast_sse("cli_flash_progress", {
                     "slot": slot_id or "new_device",
                     "percent": 5,
                     "message": f"正在准备向目标设备 ({port or 'Bootloader自动探测'}) 下发烧录任务 ({chip.upper()} · {'全量' if mode=='full' else '脚本'})...",
                     "stage": "starting"
                 })
-                # 1. 若为已知卡槽，暂停轮询以防冲突
+                # 1. 若为已知卡槽或未分配裸板，挂起串口以防冲突并检查加锁结果
+                pause_res = None
                 if slot_id:
-                    self.backend.execute_cmd("pause_for_flash", {}, slot=slot_id, timeout=3.0)
-                time.sleep(0.5)
+                    pause_res = self.backend.execute_cmd("pause_for_flash", {"mode": mode}, slot=slot_id, timeout=3.0)
+                else:
+                    pause_res = self.backend.execute_cmd("pause_for_flash", {"is_unassigned": True, "port": port, "chip": chip, "mode": mode}, timeout=3.0)
+
+                if pause_res and not pause_res.get("ok"):
+                    err_msg = pause_res.get("error") or pause_res.get("msg") or "目标模组正忙或串口独占锁定失败"
+                    self.backend.broadcast_sse("cli_flash_progress", {
+                        "slot": slot_id or "new_device",
+                        "percent": 0,
+                        "message": f"硬件线刷中断: {err_msg}",
+                        "stage": "error"
+                    })
+                    return
+                time.sleep(0.3)
 
                 def _cb(pct, msg):
                     self.backend.broadcast_sse("cli_flash_progress", {
@@ -1574,6 +2498,8 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
                 # 2. 恢复串口轮询
                 if slot_id:
                     self.backend.execute_cmd("resume_after_flash", {}, slot=slot_id, timeout=3.0)
+                else:
+                    self.backend.execute_cmd("resume_after_flash", {"is_unassigned": True, "port": port}, timeout=3.0)
 
                 if res.get("ok"):
                     self.backend.broadcast_sse("cli_flash_progress", {
@@ -1595,7 +2521,7 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
 
             threading.Thread(
                 target=_cli_flash_worker,
-                args=(action_slot, target_port, chip_type, req_mode, model_bsp),
+                args=(action_slot, target_port, chip_type, req_mode, model_bsp, is_unassigned),
                 daemon=True
             ).start()
 
@@ -1628,32 +2554,67 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
                 if os.path.exists(GATEWAY_CONFIG_PATH):
                     with open(GATEWAY_CONFIG_PATH, "r", encoding="utf-8") as f:
                         cur_cfg = json.load(f)
+                    if not isinstance(cur_cfg, dict):
+                        raise ValueError("invalid config root")
+                clear_fields = body.get("clear") or {}
                 for k, v in body.items():
+                    if k == "clear":
+                        continue
                     if isinstance(v, dict):
-                        if k not in cur_cfg: cur_cfg[k] = {}
-                        cur_cfg[k].update(v)
+                        section = cur_cfg.get(k)
+                        if not isinstance(section, dict):
+                            section = {}
+                        for field, value in v.items():
+                            if k in ("feishu", "dingtalk", "wecom", "bark", "webhook") and field in ("url", "secret") and value == "":
+                                continue
+                            section[field] = value
+                        cur_cfg[k] = section
                     else:
                         cur_cfg[k] = v
+                if isinstance(clear_fields, dict):
+                    for channel, fields in clear_fields.items():
+                        if channel in ("feishu", "dingtalk", "wecom", "bark", "webhook") and isinstance(fields, list):
+                            for field in fields:
+                                replacement = (body.get(channel) or {}).get(field)
+                                if field in ("url", "secret") and not replacement:
+                                    cur_cfg.get(channel, {}).pop(field, None)
+                for channel in ("feishu", "dingtalk", "wecom", "bark", "webhook"):
+                    channel_cfg = cur_cfg.get(channel) or {}
+                    if channel_cfg.get("enable") and not channel_cfg.get("url"):
+                        self._send_json_resp(400, {"ok": False, "error": f"{channel} 已启用但未配置地址"})
+                        return
 
-                with open(GATEWAY_CONFIG_PATH, "w", encoding="utf-8") as f:
+                next_path = GATEWAY_CONFIG_PATH + ".next"
+                with open(next_path, "w", encoding="utf-8") as f:
                     json.dump(cur_cfg, f, ensure_ascii=False, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(next_path, GATEWAY_CONFIG_PATH)
 
-                # 向底层 Hub 发送配置重载指令（免检内部指令携带内部令牌）
-                hub_cmd = {
-                    "type": "cmd",
-                    "cmd": "reload_notify_config",
-                    "source": "web",
-                    "token": getattr(self.backend, "internal_session_token", "")
-                }
-                try:
-                    line = json.dumps(hub_cmd, ensure_ascii=False) + "\n"
-                    with self.backend.sock_lock:
-                        if self.backend.sock:
-                            self.backend.sock.sendall(line.encode("utf-8"))
-                except Exception:
-                    pass
-
-                self._send_json_resp(200, {"ok": True, "msg": "系统配置已成功保存并立即生效"})
+                reload_result = self.backend.execute_cmd("reload_notify_config", timeout=3.0)
+                active = bool(reload_result.get("ok"))
+                board_sync = {}
+                board_sync_known = False
+                if active:
+                    slots_resp = self.backend.execute_cmd("get_slots", timeout=3.0)
+                    board_sync_known = bool(slots_resp.get("ok"))
+                    slots = (slots_resp.get("data") or {}).get("slots") or []
+                    board_cfg = {name: cur_cfg.get(name) or {} for name in
+                                 ("feishu", "dingtalk", "wecom", "bark", "webhook")}
+                    for slot_info in slots:
+                        slot_id = slot_info.get("slot")
+                        if not slot_id or not slot_info.get("online"):
+                            continue
+                        board_resp = self.backend.execute_cmd(
+                            "set_notify_config", params=board_cfg, slot=slot_id, timeout=6.0)
+                        board_data = board_resp.get("data") or {}
+                        board_sync[slot_id] = bool(
+                            board_resp.get("ok") and board_resp.get("msg") == "NOTIFY_CONFIG_PERSISTED"
+                            and isinstance(board_data, dict) and board_data.get("synced"))
+                self._send_json_resp(200, {"ok": True, "saved": True, "active": active,
+                                           "board_sync": board_sync,
+                                           "board_sync_known": board_sync_known,
+                                           "msg": "配置已保存并加载" if active else "配置已保存，后台加载未确认"})
             except Exception as e:
                 self._send_json_resp(500, {"ok": False, "error": f"保存配置失败: {e}"})
             return
@@ -1661,9 +2622,27 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
         # 9. 测试单渠道推送
         if path == "/api/config/notify/test":
             channel = body.get("channel")
-            channel_cfg = body.get("config") or {}
-            if not channel or not isinstance(channel_cfg, dict):
+            if channel not in ("feishu", "dingtalk", "wecom", "bark", "webhook"):
                 self._send_json_resp(400, {"ok": False, "error": "缺少测试渠道或参数"})
+                return
+            reload_result = self.backend.execute_cmd("reload_notify_config", timeout=3.0)
+            if not reload_result.get("ok"):
+                self._send_json_resp(503, {"ok": False, "error": "后台配置尚未加载，未发送测试消息"})
+                return
+            if not os.path.isfile(GATEWAY_CONFIG_PATH):
+                self._send_json_resp(400, {"ok": False, "error": "请先保存通知渠道配置"})
+                return
+            try:
+                with open(GATEWAY_CONFIG_PATH, "r", encoding="utf-8") as f:
+                    saved_cfg = json.load(f)
+                if not isinstance(saved_cfg, dict):
+                    raise ValueError("invalid config root")
+            except (OSError, ValueError):
+                self._send_json_resp(503, {"ok": False, "error": "已保存配置无法读取，未发送测试消息"})
+                return
+            channel_cfg = saved_cfg.get(channel) or {}
+            if not channel_cfg.get("enable") or not channel_cfg.get("url"):
+                self._send_json_resp(400, {"ok": False, "error": "请先保存并启用该通知渠道"})
                 return
 
             target_slot = body.get("slot")
@@ -1678,10 +2657,104 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
             self._send_json_resp(200, res)
             return
 
+        # 10. 系统偏好增量更新 (Patch Update，防重新洗牌) (AIR-57 / AIR-59 / AIR-62)
+        if path == "/api/system/settings":
+            BOOL_SYSTEM_KEYS = {
+                "autostart", "auto_copy_otp", 
+                "desktop_notification", "privacy_mode", "play_sound",
+                "store_on_board", "daily_reboot"
+            }
+            if "autostart" in body:
+                set_autostart_status(bool(body["autostart"]))
+
+            cur_cfg = {}
+            if os.path.exists(GATEWAY_CONFIG_PATH):
+                try:
+                    with open(GATEWAY_CONFIG_PATH, "r", encoding="utf-8") as f:
+                        cur_cfg = json.load(f)
+                    if not isinstance(cur_cfg, dict):
+                        cur_cfg = {}
+                except Exception:
+                    cur_cfg = {}
+
+            sec_system = cur_cfg.setdefault("system", {})
+            for k in BOOL_SYSTEM_KEYS:
+                if k in body:
+                    sec_system[k] = bool(body[k])
+
+            # 局域网访问权限控制 (AIR-62：权限安全红线，仅限本机客户端修改，外部非本机请求忽略篡改)
+            client_ip = self.client_address[0] if (self.client_address and len(self.client_address) > 0) else None
+            is_client_local = self._is_loopback_client(client_ip)
+            if "lan_access" in body and is_client_local:
+                new_lan_val = bool(body["lan_access"])
+                sec_system["lan_access"] = new_lan_val
+                # 同步更新底层 HTTP 服务器内存原子缓存
+                self.server.lan_access_enabled = new_lan_val
+                _log(f"局域网跨设备访问开关已由本机更新为: {'已启用' if new_lan_val else '已关闭'}")
+            elif "lan_access" in body and not is_client_local:
+                _log(f"外部客户端 {client_ip} 试图更改局域网访问权限，已被安全防护策略忽略")
+
+            # 整型整点安全门禁与范围限制 (0~23)
+            if "daily_reboot_hour" in body:
+                try:
+                    h = int(body["daily_reboot_hour"])
+                    sec_system["daily_reboot_hour"] = h if 0 <= h <= 23 else 4
+                except (ValueError, TypeError):
+                    sec_system["daily_reboot_hour"] = 4
+
+            try:
+                next_path = GATEWAY_CONFIG_PATH + ".next"
+                with open(next_path, "w", encoding="utf-8") as f:
+                    json.dump(cur_cfg, f, ensure_ascii=False, indent=2)
+                    f.flush()
+                    os.fsync(f.fileno())
+                os.replace(next_path, GATEWAY_CONFIG_PATH)
+
+                self.backend.execute_cmd("reload_notify_config", timeout=2.0)
+
+                # 向在线板卡物理同步定时重启策略 (关为 -1，开为 0~23)
+                target_reboot_hour = int(sec_system.get("daily_reboot_hour", 4)) if sec_system.get("daily_reboot", False) else -1
+                slots_resp = self.backend.execute_cmd("get_slots", timeout=2.0)
+                if slots_resp and isinstance(slots_resp, dict) and slots_resp.get("ok"):
+                    slots = (slots_resp.get("data") or {}).get("slots") or []
+                    for s in slots:
+                        sid = s.get("slot")
+                        if sid and s.get("online"):
+                            try:
+                                self.backend.execute_cmd("set_reboot_policy", params={"hour": target_reboot_hour}, slot=sid, timeout=3.0)
+                            except Exception:
+                                pass
+
+                self._send_json_resp(200, {"ok": True, "msg": "系统偏好已保存并同步", "data": sec_system})
+            except Exception as e:
+                self._send_json_resp(500, {"ok": False, "error": f"保存配置失败: {e}"})
+            return
+
+        # 11. 目录直达打开安全门禁 (AIR-57)
+        if path == "/api/system/open_folder":
+            target = str(body.get("target") or "").strip()
+            ok, msg = handle_open_folder(target)
+            if ok:
+                self._send_json_resp(200, {"ok": True, "msg": msg})
+            else:
+                self._send_json_resp(400, {"ok": False, "error": msg})
+            return
+
+        # 12. 运行日志清空 (AIR-57)
+        if path == "/api/system/clear_logs":
+            if clear_runtime_log():
+                self._send_json_resp(200, {"ok": True, "log_size_human": "0 KB", "log_size_bytes": 0})
+            else:
+                self._send_json_resp(500, {"ok": False, "error": "清理日志失败"})
+            return
+
         self._send_json_resp(404, {"ok": False, "error": "接口不存在"})
 
     def handle_sse_stream(self):
-        """处理 SSE 持续事件推送流"""
+        """处理 SSE 持续事件推送流 (含局域网开关关闭瞬间的主动热逐出看门狗)"""
+        client_ip = self.client_address[0] if (self.client_address and len(self.client_address) > 0) else None
+        is_local = self._is_loopback_client(client_ip)
+
         self.send_response(200)
         self._send_cors_headers()
         self.send_header("Content-Type", "text/event-stream")
@@ -1691,6 +2764,8 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
         self.end_headers()
 
         q = self.backend.register_sse_listener()
+        if hasattr(self.backend, "touch_activity"):
+            self.backend.touch_activity(active_sse_count=len(self.backend.sse_listeners), force=True)
         _log(f"前端已建立 SSE 事件流连接 (当前队列数: {len(self.backend.sse_listeners)})")
 
         # 初始向刚连接的前端发送当前卡槽列表
@@ -1707,12 +2782,37 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
         except Exception:
             self.backend.unregister_sse_listener(q)
+            if hasattr(self.backend, "touch_activity"):
+                self.backend.touch_activity(active_sse_count=len(self.backend.sse_listeners), force=True)
             return
 
         try:
+            last_periodic_touch = time.time()
             while True:
+                now = time.time()
+                if now - last_periodic_touch >= 15.0:
+                    last_periodic_touch = now
+                    if hasattr(self.backend, "touch_activity"):
+                        self.backend.touch_activity(active_sse_count=len(self.backend.sse_listeners), force=True)
+
+                # 存量连接安全看门狗：非本机客户端在局域网开关关闭时立即主动掐断断连
+                if not is_local:
+                    lan_enabled = getattr(self.server, "lan_access_enabled", False)
+                    if not lan_enabled:
+                        _log(f"局域网访问已在控制台关闭，主动掐断外部客户端 {client_ip} 的 SSE 实时流连接")
+                        try:
+                            self.wfile.write(b"event: close\ndata: {\"reason\":\"lan_access_disabled\"}\n\n")
+                            self.wfile.flush()
+                        except Exception:
+                            pass
+                        break
+
                 try:
-                    item = q.get(timeout=15.0)
+                    item = q.get(timeout=2.0)
+                    # 写入真实 payload 之前再次核验局域网权限，防止正在排队的短信泄露
+                    if not is_local and not getattr(self.server, "lan_access_enabled", False):
+                        _log(f"局域网访问已关闭，阻断向外部客户端 {client_ip} 发送待推送事件")
+                        break
                     evt_name = item.get("event", "message")
                     evt_data = json.dumps(item.get("data", {}), ensure_ascii=False)
                     payload = f"event: {evt_name}\ndata: {evt_data}\n\n".encode("utf-8")
@@ -1728,7 +2828,9 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
             _log(f"SSE 推送异常: {e}")
         finally:
             self.backend.unregister_sse_listener(q)
-            _log("前端已断开 SSE 事件流连接")
+            if hasattr(self.backend, "touch_activity"):
+                self.backend.touch_activity(active_sse_count=len(self.backend.sse_listeners), force=True)
+            _log(f"前端已断开 SSE 事件流连接 ({client_ip})")
 
 
 # =========================================================================
@@ -1742,11 +2844,24 @@ class WebServer:
         self.backend = HubBackendClient(host=hub_host, port=hub_port)
         self.httpd = None
 
+        # 从磁盘配置文件加载局域网访问初始开关（出厂默认为 false，安全隔离）
+        self.lan_access_enabled = False
+        if os.path.exists(GATEWAY_CONFIG_PATH):
+            try:
+                with open(GATEWAY_CONFIG_PATH, "r", encoding="utf-8") as f:
+                    cfg = json.load(f)
+                if isinstance(cfg, dict):
+                    self.lan_access_enabled = bool(cfg.get("system", {}).get("lan_access", False))
+            except Exception:
+                self.lan_access_enabled = False
+
     def start(self):
         self.backend.start()
         self.httpd = ThreadedHTTPServer((self.host, self.port), GatewayWebHandler)
         self.httpd.backend = self.backend
-        _log(f"Web 控制台已启动，访问地址: http://127.0.0.1:{self.port}")
+        # 将布尔缓存原子挂载到底层 HTTP 实例，供 GatewayWebHandler 毫秒级免 I/O 检查
+        self.httpd.lan_access_enabled = self.lan_access_enabled
+        _log(f"Web 控制台已启动，访问地址: http://127.0.0.1:{self.port} (局域网跨设备访问: {'已启用' if self.lan_access_enabled else '已关闭·仅本机可用'})")
         try:
             self.httpd.serve_forever()
         except KeyboardInterrupt:

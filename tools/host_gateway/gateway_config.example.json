@@ -1,6 +1,7 @@
 {
   "system": {
-    "auto_copy_otp": 1
+    "auto_copy_otp": 1,
+    "lan_access": false
   },
   "feishu": {
     "enable": 1,

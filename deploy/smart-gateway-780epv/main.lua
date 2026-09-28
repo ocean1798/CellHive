@@ -1,6 +1,6 @@
 PROJECT = "Air780EPV_Gateway"
 VERSION = "1.2.9"
-local BUILD_ID = "hardware-gateway-r1-20260919"
+local BUILD_ID = "hardware-gateway-r1-20260915"
 _G.GATEWAY_VERSION = VERSION
 log.setLevel(2) -- INFO 级别
 log.style(0) -- 纯文本风格输出，避免合宙上位机私有二进制帧干扰通信
@@ -21,15 +21,13 @@ if wdt then
     sys.timerLoopStart(wdt.feed, 1000 * 3)
     log.info("sys", "Hardware watchdog armed")
 end
-if errDump and errDump.config then pcall(errDump.config, false) end
-if pm then
-    if pm.NONE and pm.force then pcall(pm.force, pm.NONE) end
-    if pm.GPS and pm.power then pcall(pm.power, pm.GPS, false) end
-    if pm.GPS_ANT and pm.power then pcall(pm.power, pm.GPS_ANT, false) end
-    if pm.CAMERA and pm.power then pcall(pm.power, pm.CAMERA, false) end
-end
-if fskv and fskv.init then
-    pcall(fskv.init)
+if errDump then errDump.config(false) end
+pm.force(pm.NONE)                   -- 保持常态活跃，不进入深度休眠
+pm.power(pm.GPS, false)
+pm.power(pm.GPS_ANT, false)
+pm.power(pm.CAMERA, false)
+if fskv then
+    fskv.init()
 end
 local function is_rndis_persisted()
     if fskv then
@@ -54,13 +52,14 @@ local function set_cellular_data_persisted(enable)
     end
 end
 local rndis_initial = is_rndis_persisted()
-if mobile and mobile.CONF_USB_ETHERNET and mobile.config then
-    pcall(mobile.config, mobile.CONF_USB_ETHERNET, rndis_initial and 3 or 0)
+if mobile and mobile.CONF_USB_ETHERNET then
+    mobile.config(mobile.CONF_USB_ETHERNET, rndis_initial and 3 or 0)
     log.info("main", "RNDIS USB mode initialized to:", rndis_initial and 3 or 0)
 end
-if mobile and mobile.ipv6 then
-    pcall(mobile.ipv6, config and config.network and config.network.IPv6 == 1)
-end
+mobile.config(mobile.CONF_STATICCONFIG, 1)  -- 静态网络优化
+mobile.config(mobile.CONF_QUALITYFIRST, 2)  -- 信号质量优先
+mobile.ipv6(config and config.network and config.network.IPv6 == 1)
+mobile.setAuto(1000 * 10, 1000 * 30, 5)     -- SIM脱落恢复与周期搜网
 local data_initial = is_cellular_data_persisted()
 local gateway_state = {
     net_ready = false,           -- 蜂窝信号/信令驻网就绪 (SMS/Call OK)
@@ -126,7 +125,9 @@ local function trigger_gateway_ready()
     gateway_state.boot_notified = true
     local report_text = build_status_report()
     local raw_num = mobile and mobile.number and mobile.number() or nil
+    local notify_id = serial_comm.new_event_id("notify")
     serial_comm.publish("gateway_ready", {
+        id = notify_id,
         bsp = model.bsp() or "未知",
         model = model.bsp() or "未知",
         imei = model.imei(),
@@ -152,7 +153,7 @@ local function trigger_gateway_ready()
         },
         report_text = report_text
     })
-    sys.publish("NOTIFY_PUSH", "boot", "", report_text)
+    sys.publish("NOTIFY_PUSH", "boot", "", report_text, "", notify_id)
     if fskv and fskv.get("fota_just_updated") then
         local updated_ver = fskv.get("fota_just_updated")
         fskv.del("fota_just_updated")
@@ -224,18 +225,12 @@ sys.subscribe("SERIAL_CMD", function(cmd_packet)
         if registration ~= nil then
             registered = registration == 1 or registration == 5 or registration == 6 or registration == 7
         end
-        local flymode_stat = false
-        local imsi_stat = mobile and mobile.imsi and mobile.imsi() or nil
-        local simid_stat = mobile and mobile.simid and mobile.simid() or nil
         serial_comm.send_response(cmd_packet.id, 0, "STATUS_OK", {
             bsp = model.bsp(),
             model = model.bsp(),
             imei = model.imei(),
             sn = model.sn(),
             iccid = model.iccid(),
-            imsi = imsi_stat,
-            simid = simid_stat,
-            flymode = flymode_stat,
             csq = mobile and mobile.csq and mobile.csq() or nil,
             rsrp = mobile and mobile.rsrp and mobile.rsrp() or nil,
             temp = model.temp(),
@@ -262,52 +257,6 @@ sys.subscribe("SERIAL_CMD", function(cmd_packet)
             store_on_board = (fskv and fskv.get("store_on_board")) ~= 0 and 1 or 0,
             lua_mem_kb = math.floor(collectgarbage("count"))
         })
-    elseif cmd_packet.cmd == "reset_network" then
-        log.info("main", "Triggering active network stack reset...")
-        if mobile and mobile.flymode then pcall(mobile.flymode, 0, false) end
-        if mobile and mobile.reset then pcall(mobile.reset) end
-        serial_comm.send_response(cmd_packet.id, 0, "NETWORK_RESET_TRIGGERED", {
-            msg = "Active network reset and flymode false executed on modem"
-        })
-    elseif cmd_packet.cmd == "get_radio_info" then
-        if mobile and mobile.reqCellInfo then pcall(mobile.reqCellInfo, 10) end
-        local band_list = {}
-        if mobile and mobile.getBand and zbuff then
-            pcall(function()
-                local b = zbuff.create(40)
-                if mobile.getBand(b) then
-                    for i = 0, b:used() - 1 do
-                        table.insert(band_list, b[i])
-                    end
-                end
-            end)
-        end
-        local cells = nil
-        if mobile and mobile.getCellInfo then pcall(function() cells = mobile.getCellInfo() end) end
-        serial_comm.send_response(cmd_packet.id, 0, "RADIO_INFO_OK", {
-            csq = mobile and mobile.csq and mobile.csq() or nil,
-            rssi = mobile and mobile.rssi and mobile.rssi() or nil,
-            rsrp = mobile and mobile.rsrp and mobile.rsrp() or nil,
-            rsrq = mobile and mobile.rsrq and mobile.rsrq() or nil,
-            snr = mobile and mobile.snr and mobile.snr() or nil,
-            status = mobile and mobile.status and mobile.status() or nil,
-            sim_id = mobile and mobile.simid and mobile.simid() or nil,
-            imsi = mobile and mobile.imsi and mobile.imsi() or nil,
-            iccid = mobile and mobile.iccid and mobile.iccid() or nil,
-            bands = band_list,
-            cells = cells
-        })
-    elseif cmd_packet.cmd == "exec" then
-        local code = cmd_packet.data and (cmd_packet.data.code or cmd_packet.data.lua) or cmd_packet.code or cmd_packet.lua
-        local f, err = load(code)
-        if f then
-            local succ, res = pcall(f)
-            serial_comm.send_response(cmd_packet.id, succ and 0 or -1, succ and "EXEC_OK" or "EXEC_ERROR", {
-                result = res
-            })
-        else
-            serial_comm.send_response(cmd_packet.id, -1, "COMPILE_ERROR", { error = err })
-        end
     elseif cmd_packet.cmd == "get_uptime" then
         local rb_stat = reboot_service.get_status()
         serial_comm.send_response(cmd_packet.id, 0, "UPTIME_OK", rb_stat)
@@ -358,7 +307,9 @@ sys.subscribe("SERIAL_CMD", function(cmd_packet)
         if changed then
             local report_text = build_status_report()
             local raw_num = mobile and mobile.number and mobile.number() or nil
+            local notify_id = serial_comm.new_event_id("notify")
             serial_comm.publish("state_change", {
+                id = notify_id,
                 bsp = model.bsp(),
                 model = model.bsp(),
                 imei = model.imei(),
@@ -379,10 +330,10 @@ sys.subscribe("SERIAL_CMD", function(cmd_packet)
             })
             if enable then
                 sys.timerStart(function()
-                    sys.publish("NOTIFY_PUSH", "state_change", "", report_text)
+                    sys.publish("NOTIFY_PUSH", "state_change", "", report_text, "", notify_id)
                 end, 2000)
             else
-                sys.publish("NOTIFY_PUSH", "state_change", "", report_text)
+                sys.publish("NOTIFY_PUSH", "state_change", "", report_text, "", notify_id)
             end
         end
     elseif cmd_packet.cmd == "set_rndis" then
@@ -394,7 +345,9 @@ sys.subscribe("SERIAL_CMD", function(cmd_packet)
         if changed then
             local report_text = build_status_report()
             local raw_num = mobile and mobile.number and mobile.number() or nil
+            local notify_id = serial_comm.new_event_id("notify")
             serial_comm.publish("state_change", {
+                id = notify_id,
                 bsp = model.bsp(),
                 model = model.bsp(),
                 imei = model.imei(),
@@ -413,7 +366,7 @@ sys.subscribe("SERIAL_CMD", function(cmd_packet)
                 change_type = "rndis",
                 report_text = report_text
             })
-            sys.publish("NOTIFY_PUSH", "state_change", "", report_text)
+            sys.publish("NOTIFY_PUSH", "state_change", "", report_text, "", notify_id)
         end
         serial_comm.send_response(cmd_packet.id, 0, "RNDIS_SWITCHING", {
             enable = enable,
@@ -421,8 +374,8 @@ sys.subscribe("SERIAL_CMD", function(cmd_packet)
             msg = enable and "RNDIS USB adapter enabling, SoC will reboot..." or "RNDIS USB adapter disabling, SoC will reboot..."
         })
         sys.timerStart(function()
-            if mobile and mobile.CONF_USB_ETHERNET and mobile.config then
-                pcall(mobile.config, mobile.CONF_USB_ETHERNET, enable and 3 or 0)
+            if mobile and mobile.CONF_USB_ETHERNET then
+                mobile.config(mobile.CONF_USB_ETHERNET, enable and 3 or 0)
             end
             log.info("main", "RNDIS toggled to:", enable, "rebooting SoC to reload USB profile...")
             rtos.reboot()

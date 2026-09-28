@@ -52,3 +52,13 @@ __pycache__/
 **/*.pyc
 .DS_Store
 Thumbs.db
+
+# Automated test run evidence & DSH execution fixtures
+changes/*/evidence/*/fixtures/
+changes/*/evidence/data-migration/
+changes/*/evidence/device-channel-p1/
+changes/*/evidence/packaging/
+changes/*/evidence/prepared-runs/
+changes/*/candidate-update-repair/
+changes/*/dsh-update-repair/
+

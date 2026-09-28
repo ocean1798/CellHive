@@ -3,7 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Air780 智能通信网关</title>
+  <title>数字蜂巢 · CellHive - 桌面私人蜂窝通信中枢</title>
+  <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Cpolygon points='50,6 88,28 88,72 50,94 12,72 12,28' fill='%230F172A' stroke='%23F59E0B' stroke-width='7' stroke-linejoin='round'/%3E%3Cpath d='M 32 40 Q 50 24 68 40' fill='none' stroke='%2338BDF8' stroke-width='8' stroke-linecap='round'/%3E%3Ccircle cx='50' cy='63' r='10' fill='%23F59E0B'/%3E%3C/svg%3E">
+  <link rel="alternate icon" href="/favicon.ico">
   <style>
     :root {
       --bg-primary: #0a0e17;
@@ -480,6 +482,13 @@
       gap: 0.65rem;
     }
 
+    .brand-logo-svg {
+      width: 32px;
+      height: 32px;
+      flex-shrink: 0;
+      display: block;
+    }
+
     .brand-logo {
       width: 30px;
       height: 30px;
@@ -529,45 +538,82 @@
       box-shadow: 0 0 8px var(--accent-green);
     }
 
-    /* 顶栏居中最新验证码胶囊 */
+    /* 顶栏居中最新验证码磁贴 (极简微型高频锚点) */
     .top-otp-capsule {
-      display: flex;
+      display: inline-flex;
       align-items: center;
-      gap: 0.5rem;
-      background: rgba(245, 158, 11, 0.12);
-      border: 1px solid rgba(245, 158, 11, 0.35);
-      padding: 0.25rem 0.75rem;
+      gap: 0.35rem;
+      background: rgba(245, 158, 11, 0.08);
+      border: 1px solid rgba(245, 158, 11, 0.28);
+      padding: 0.18rem 0.55rem;
       border-radius: var(--radius-pill);
       cursor: pointer;
-      transition: all 0.15s ease;
+      user-select: none;
+      transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
     }
 
     .top-otp-capsule:hover {
-      background: rgba(245, 158, 11, 0.22);
-      border-color: rgba(245, 158, 11, 0.6);
+      background: rgba(245, 158, 11, 0.18);
+      border-color: rgba(245, 158, 11, 0.55);
       transform: translateY(-1px);
+      box-shadow: 0 2px 8px rgba(245, 158, 11, 0.15);
     }
 
-    .top-otp-title {
+    .top-otp-capsule:active {
+      transform: translateY(0);
+    }
+
+    .top-otp-icon {
       font-size: 0.72rem;
-      color: #f59e0b;
-      font-weight: 600;
+      line-height: 1;
     }
 
     .top-otp-code {
-      font-size: 0.85rem;
-      font-weight: 800;
+      font-size: 0.82rem;
+      font-weight: 700;
       letter-spacing: 0.05em;
       color: #fbbf24;
       font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      line-height: 1.1;
     }
 
-    .top-otp-copy-hint {
-      font-size: 0.68rem;
-      color: #fde68a;
-      background: rgba(245, 158, 11, 0.25);
-      padding: 0.08rem 0.35rem;
-      border-radius: 4px;
+    .top-otp-time {
+      font-size: 0.65rem;
+      color: #94a3b8;
+      font-weight: 500;
+      line-height: 1.1;
+      padding-left: 0.15rem;
+    }
+
+    /* 新鲜度衰减阶梯: 超过 15 分钟变暗 (历史验证码) */
+    .top-otp-capsule.stale {
+      opacity: 0.45;
+      filter: grayscale(0.35);
+      border-color: rgba(148, 163, 184, 0.25);
+      background: rgba(15, 23, 42, 0.4);
+    }
+
+    .top-otp-capsule.stale:hover {
+      opacity: 0.9;
+      filter: grayscale(0);
+      border-color: rgba(245, 158, 11, 0.45);
+    }
+
+    /* 点击就地反馈动效 */
+    .top-otp-capsule.copied {
+      background: rgba(16, 185, 129, 0.16) !important;
+      border-color: rgba(16, 185, 129, 0.6) !important;
+      box-shadow: 0 0 10px rgba(16, 185, 129, 0.25) !important;
+      transform: scale(0.98);
+    }
+
+    .top-otp-capsule.copied .top-otp-code {
+      color: #34d399 !important;
+    }
+
+    .top-otp-capsule.copied .top-otp-time {
+      color: #6ee7b7 !important;
     }
 
     /* 右端 32x32px 极简小齿轮 */
@@ -1540,6 +1586,61 @@
     .term-line-warn { color: #facc15; }
     .term-line-err, .term-line-error { color: #f87171; font-weight: 600; }
 
+    /* 3 选 1 防呆开箱向导大卡片样式 (AIR-44) */
+    .wizard-chip-card {
+      position: relative;
+      background: rgba(30, 41, 59, 0.7);
+      border: 1.5px solid rgba(255, 255, 255, 0.1);
+      border-radius: var(--radius-sm);
+      padding: 0.65rem 0.55rem;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      user-select: none;
+    }
+    .wizard-chip-card:hover {
+      border-color: rgba(59, 130, 246, 0.5);
+      background: rgba(30, 41, 59, 0.95);
+    }
+    .wizard-chip-card.active {
+      border-color: #3b82f6;
+      background: rgba(59, 130, 246, 0.18);
+      box-shadow: 0 0 14px rgba(59, 130, 246, 0.35);
+    }
+    .wizard-chip-card.recommended {
+      border-color: #10b981;
+      background: rgba(16, 185, 129, 0.15);
+      box-shadow: 0 0 14px rgba(16, 185, 129, 0.4);
+    }
+    .wizard-card-badge {
+      position: absolute;
+      top: -8px;
+      right: 6px;
+      background: #10b981;
+      color: #fff;
+      font-size: 0.62rem;
+      font-weight: 700;
+      padding: 1px 6px;
+      border-radius: 9999px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.35);
+    }
+    .wizard-card-title {
+      font-size: 0.78rem;
+      font-weight: 700;
+      color: #f8fafc;
+      margin-bottom: 3px;
+    }
+    .wizard-card-chip {
+      font-size: 0.68rem;
+      color: #38bdf8;
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .wizard-card-desc {
+      font-size: 0.63rem;
+      color: #94a3b8;
+      line-height: 1.35;
+    }
+
     /* 高保真进度条 */
     .progress-bar-wrap {
       background: #1e293b;
@@ -1572,23 +1673,59 @@
       pointer-events: auto;
     }
 
-    /* 系统设置右侧抽屉 */
+    /* 系统设置右侧抽屉 (AIR-58 640px 通透微透层) */
     .settings-drawer {
       position: fixed;
       top: 0; right: 0; bottom: 0;
-      width: 420px;
+      width: 640px;
       max-width: 90vw;
-      background: #0f172a;
-      border-left: 1px solid rgba(255, 255, 255, 0.12);
+      background: rgba(11, 15, 25, 0.96) !important;
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
+      border-left: 1px solid rgba(255, 255, 255, 0.08);
       box-shadow: -12px 0 45px rgba(0, 0, 0, 0.7);
       z-index: 2001;
       display: flex;
       flex-direction: column;
       transform: translateX(100%);
       transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1);
+      --bg-card: rgba(255, 255, 255, 0.025);
+      --border-color: rgba(255, 255, 255, 0.06);
     }
     .settings-drawer.open {
       transform: translateX(0);
+    }
+    .settings-drawer .modal-header,
+    .settings-drawer .modal-footer {
+      background: transparent !important;
+      border-color: rgba(255, 255, 255, 0.06) !important;
+    }
+    .settings-drawer .notify-channel-card:hover,
+    .settings-drawer .strategy-item-card:hover {
+      background: rgba(255, 255, 255, 0.04) !important;
+      border-color: rgba(255, 255, 255, 0.1) !important;
+    }
+    .input-inline-wrap {
+      position: relative;
+      display: flex;
+      align-items: center;
+      width: 100%;
+    }
+    .btn-inline-clear {
+      position: absolute;
+      right: 6px;
+      padding: 2px 7px;
+      font-size: 11px;
+      background: rgba(239, 68, 68, 0.15);
+      border: 1px solid rgba(239, 68, 68, 0.3);
+      color: #f87171;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .btn-inline-clear:hover {
+      background: rgba(239, 68, 68, 0.3);
+      border-color: #f87171;
     }
 
     /* 浮动通知气泡 Toast */
@@ -1678,6 +1815,26 @@
       opacity: 0.5;
       cursor: not-allowed;
       background-color: rgba(0, 0, 0, 0.2);
+    }
+
+    /* 紧凑下拉框 (针对抽屉内定时重启等小空间控件) */
+    .form-input-compact-select {
+      appearance: none;
+      -webkit-appearance: none;
+      -moz-appearance: none;
+      background-color: rgba(15, 23, 42, 0.8) !important;
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 24 24' stroke='%2394a3b8'%3E%3Cpath stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M19 9l-7 7-7-7'%3E%3C/path%3E%3C/svg%3E");
+      background-repeat: no-repeat;
+      background-position: right 0.35rem center;
+      background-size: 0.7rem 0.7rem;
+      padding-right: 1.25rem !important;
+      cursor: pointer;
+      color-scheme: dark;
+    }
+    .form-input-compact-select option {
+      background-color: #0b0f19 !important;
+      color: #f8fafc !important;
+      padding: 0.35rem;
     }
 
   
@@ -1911,7 +2068,7 @@
       font-size: 0.76rem;
     }
 
-    /* 移动端下右上角适配 */
+    /* 移动端下右上角与抽屉适配 (AIR-58) */
     @media (max-width: 640px) {
       .sms-header {
         flex-direction: column;
@@ -1922,6 +2079,16 @@
         width: 100%;
         justify-content: space-between;
         margin-left: 0;
+      }
+      .settings-drawer {
+        width: 100% !important;
+        max-width: 100% !important;
+      }
+      .strategy-grid-container {
+        grid-template-columns: 1fr !important;
+      }
+      .strategy-item-full {
+        grid-column: span 1 !important;
       }
     }
 
@@ -1942,42 +2109,7 @@
       border-color: rgba(239, 68, 68, 0.35);
     }
 
-    /* 顶栏居中最新验证码胶囊 (100% 对齐原版截图 2) */
-    .top-otp-capsule {
-      display: flex;
-      align-items: center;
-      gap: 0.5rem;
-      background: rgba(245, 158, 11, 0.12);
-      border: 1px solid rgba(245, 158, 11, 0.35);
-      padding: 0.25rem 0.75rem;
-      border-radius: var(--radius-pill);
-      cursor: pointer;
-      transition: all 0.15s ease;
-    }
-    .top-otp-capsule:hover {
-      background: rgba(245, 158, 11, 0.2);
-      border-color: rgba(245, 158, 11, 0.6);
-      transform: translateY(-1px);
-    }
-    .top-otp-title {
-      font-size: 0.72rem;
-      color: #f59e0b;
-      font-weight: 600;
-    }
-    .top-otp-code {
-      font-size: 0.85rem;
-      font-weight: 800;
-      letter-spacing: 0.05em;
-      color: #fbbf24;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
-    }
-    .top-otp-copy-hint {
-      font-size: 0.68rem;
-      color: #fde68a;
-      background: rgba(245, 158, 11, 0.25);
-      padding: 0.08rem 0.35rem;
-      border-radius: 4px;
-    }
+
 
     /* 顶栏右端 32x32px 极简小齿轮 */
     .btn-icon-setting {
@@ -2206,24 +2338,54 @@
   <header>
     <div class="header-container">
       <div class="brand">
-        <div class="brand-logo">4G</div>
+        <svg class="brand-logo-svg" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <linearGradient id="brandAmber" x1="10%" y1="10%" x2="90%" y2="90%">
+              <stop offset="0%" stop-color="#FCD34D" />
+              <stop offset="50%" stop-color="#F59E0B" />
+              <stop offset="100%" stop-color="#D97706" />
+            </linearGradient>
+            <linearGradient id="brandCyan" x1="0%" y1="100%" x2="100%" y2="0%">
+              <stop offset="0%" stop-color="#0284C7" />
+              <stop offset="100%" stop-color="#38BDF8" />
+            </linearGradient>
+            <filter id="brandGlow" x="-20%" y="-20%" width="140%" height="140%">
+              <feDropShadow dx="0" dy="2" stdDeviation="3" flood-color="#F59E0B" flood-opacity="0.35" />
+            </filter>
+          </defs>
+          <polygon points="50,6 88,28 88,72 50,94 12,72 12,28" 
+                   fill="rgba(15, 23, 42, 0.90)" 
+                   stroke="url(#brandAmber)" 
+                   stroke-width="3.5" 
+                   stroke-linejoin="round"
+                   filter="url(#brandGlow)" />
+          <polygon points="50,18 78,34 78,66 50,82 22,66 22,34" 
+                   fill="none" 
+                   stroke="rgba(245, 158, 11, 0.28)" 
+                   stroke-width="1.8" 
+                   stroke-dasharray="3 3" />
+          <path d="M 32 38 Q 50 24 68 38" fill="none" stroke="url(#brandCyan)" stroke-width="3.5" stroke-linecap="round" />
+          <path d="M 37 50 Q 50 38 63 50" fill="none" stroke="url(#brandAmber)" stroke-width="4.0" stroke-linecap="round" />
+          <circle cx="50" cy="63" r="5.5" fill="url(#brandAmber)" />
+          <circle cx="50" cy="63" r="10.5" fill="none" stroke="url(#brandAmber)" stroke-width="1.5" opacity="0.5" />
+        </svg>
         <div>
           <div class="brand-title">
-            <span>智能通信网关</span>
+            <span>数字蜂巢 · CellHive</span>
             <span class="header-cluster-badge" id="headerCountBadge">模组在线 · 运行健康</span>
           </div>
           <div class="brand-subtitle">
             <span class="status-dot"></span>
-            <span id="headerClusterDesc">中枢运行正常 · 端口 17800</span>
+            <span id="headerClusterDesc">上位机推送</span>
           </div>
         </div>
       </div>
 
-      <!-- 顶栏居中最新验证码胶囊 (经典模式使用) -->
+      <!-- 顶栏居中最新验证码磁贴 (极简高频锚点) -->
       <div class="top-otp-capsule" id="topOtpCapsule" onclick="copyTopOtp()" title="点击复制最新收到的验证码" style="display: none;">
-        <span class="top-otp-title">⚡ 最新验证码:</span>
+        <span class="top-otp-icon">🔑</span>
         <span class="top-otp-code" id="topOtpValue"></span>
-        <span class="top-otp-copy-hint" id="topOtpSlotHint">来自通信模组 · 点击复制</span>
+        <span class="top-otp-time" id="topOtpTime">刚刚</span>
       </div>
 
       <!-- iPhone 灵动通信岛 (仅在 data-theme="island" 下激活) -->
@@ -2388,36 +2550,32 @@
        高保真弹窗与抽屉 (对齐全部 DOM ID 与业务逻辑)
        ========================================================= -->
 
-  <!-- 1. FOTA 在线升级模态框 -->
+  <!-- 1. FOTA 检查上位机随附更新包模态框 (AIR-38 / v4 规范) -->
   <div class="modal-backdrop" id="modalFota">
     <div class="modal-box" style="width: 530px;">
-      <div class="modal-header">
-        <div class="modal-title" style="white-space: nowrap;">
-          <span>🔄 固件版本检测与升级</span>
-          <span class="sms-slot-pill" id="fotaSlotBadge">合宙通信模组</span>
+      <div class="modal-header" style="align-items: flex-start; gap: 0.5rem;">
+        <div class="modal-title" style="flex: 1; min-width: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 0.35rem 0.5rem; line-height: 1.4;">
+          <span style="word-break: break-word;">🔄 检查上位机随附更新包（离线）</span>
+          <span class="sms-slot-pill" id="fotaSlotBadge" style="flex-shrink: 0;">合宙通信模组</span>
         </div>
-        <button class="btn-modal-close" onclick="closeModal('modalFota')">✕</button>
+        <button class="btn-modal-close" style="flex-shrink: 0; margin-top: 1px;" onclick="closeModal('modalFota')">✕</button>
       </div>
       <div class="modal-body">
-        <div class="detail-data-grid" style="grid-template-columns: 80px 1fr; gap: 0.5rem 0.8rem; background: rgba(0,0,0,0.2); padding: 0.75rem; border-radius: var(--radius-sm);">
-          <span class="data-label">模组型号:</span><span class="data-val" id="fotaModelName">--</span>
+        <div class="detail-data-grid" style="grid-template-columns: 85px 1fr; gap: 0.5rem 0.8rem; background: rgba(0,0,0,0.2); padding: 0.75rem; border-radius: var(--radius-sm);">
+          <span class="data-label">当前设备:</span><span class="data-val" id="fotaModelName">--</span>
           <span class="data-label">当前固件:</span><span class="data-val" id="fotaCurrentVer">--</span>
-          <span class="data-label">最新固件:</span><span class="data-val" id="fotaTargetVer" style="color: var(--accent-green); font-weight: 700;">--</span>
-          <span class="data-label">更新方式:</span><span class="data-val" id="fotaMethod" style="color: #38bdf8;">本地串口极速热更 (0流量·保留所有短信)</span>
+          <span class="data-label">随附更新包:</span><span class="data-val" id="fotaTargetVer" style="color: var(--accent-green); font-weight: 700;">--</span>
+          <span class="data-label">检查状态:</span><span class="data-val" id="fotaMethod" style="color: #38bdf8;">--</span>
         </div>
 
-        <div>
+        <div id="fotaChangelogSection" style="display: none; margin-top: 0.5rem;">
           <div style="font-size: 0.74rem; font-weight: 700; color: #f8fafc; margin-bottom: 0.35rem;">📜 更新日志 (CHANGELOG):</div>
-          <div id="fotaChangelogBox" style="background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 0.6rem 0.8rem; font-size: 0.72rem; color: #cbd5e1; line-height: 1.6;">
-            • 优化弱信号环境下的自动重新联网稳定性<br>
-            • 改进长短信接收与防重复机制<br>
-            • 优化设备内部存储空间管理与定时自愈能力
-          </div>
+          <div id="fotaChangelogBox" style="background: rgba(0,0,0,0.3); border: 1px solid var(--border-color); border-radius: var(--radius-sm); padding: 0.6rem 0.8rem; font-size: 0.72rem; color: #cbd5e1; line-height: 1.6; white-space: pre-line;"></div>
         </div>
 
-        <div id="fotaProgressSection" style="display: none;">
+        <div id="fotaProgressSection" style="display: none; margin-top: 0.5rem;">
           <div style="display: flex; justify-content: space-between; font-size: 0.72rem; margin-bottom: 0.3rem;">
-            <span id="fotaStatusText" style="color: #38bdf8;">正在下载固件更新包...</span>
+            <span id="fotaStatusText" style="color: #38bdf8;">正在准备更新...</span>
             <span id="fotaPercentText" style="font-weight: 700; color: #34d399;">0%</span>
           </div>
           <div class="progress-bar-wrap">
@@ -2430,16 +2588,16 @@
         </div>
       </div>
       <div class="modal-footer">
-        <button class="btn btn-secondary" onclick="closeModal('modalFota')">稍后再说</button>
-        <button class="btn btn-primary" id="btnStartFota" onclick="executeFotaUpgrade()">🚀 立即在线升级 (约3秒)</button>
-        <button class="btn btn-warning" id="btnGoFlashtool" style="display: none;" onclick="switchToFlashModal()">🛠️ 打开重新刷机控制台</button>
+        <button class="btn btn-secondary" onclick="closeModal('modalFota')">关闭</button>
+        <button class="btn btn-outline" id="btnRecheckFota" style="display: none;" onclick="openFotaModal(state.currentTargetSlot)">🔄 重新检查</button>
+        <button class="btn btn-primary" id="btnStartFota" style="display: none;" onclick="executeFotaUpgrade()">🚀 安装更新</button>
       </div>
     </div>
   </div>
 
   <!-- 2. AIR-35 移芯通用物理线刷与全新模组接入控制台 -->
   <div class="modal-backdrop" id="modalFlashtool">
-    <div class="modal-box" style="width: 580px;">
+    <div class="modal-box" style="width: 620px; max-width: 95vw;">
       <div class="modal-header">
         <div class="modal-title">
           <span id="flashModalHeaderTitle">🛠️ 固件烧录与修复控制台</span>
@@ -2448,13 +2606,44 @@
         <button class="btn-modal-close" onclick="closeModal('modalFlashtool')">✕</button>
       </div>
       <div class="modal-body">
-        <div style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: var(--radius-sm); padding: 0.6rem 0.8rem; font-size: 0.72rem; color: #93c5fd; line-height: 1.5; margin-bottom: 0.5rem;">
+        <div id="flashModeDescBox" style="background: rgba(59, 130, 246, 0.08); border: 1px solid rgba(59, 130, 246, 0.25); border-radius: var(--radius-sm); padding: 0.6rem 0.8rem; font-size: 0.72rem; color: #93c5fd; line-height: 1.5; margin-bottom: 0.5rem;">
           💡 <b>刷机模式说明:</b><br>
           • <b>应用脚本更新 (1~2秒):</b> 仅刷新智能网关 Lua 业务代码，保留原有底层内核与射频校准，日常维护推荐；<br>
           • <b>全量系统刷入 (8~12秒):</b> 全新模块开箱初始化、内核故障修复或跨平台重装，全量烧入底层 LuatOS 内核 + 射频表 + 业务脚本。
         </div>
 
-        <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.5rem;">
+        <!-- 3 选 1 防呆开箱向导大卡片 (全新模组开箱接入时呈现) -->
+        <div id="wizardCardsContainer" style="display: none; margin-bottom: 0.6rem;">
+          <div class="form-label" style="margin-bottom: 0.4rem; display: flex; justify-content: space-between; align-items: center;">
+            <span>选择模组硬件型号 (出厂 AT 自动匹配推荐):</span>
+            <span id="wizardRecommendHint" style="font-size: 0.7rem; color: #10b981; font-weight: 600;"></span>
+          </div>
+          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem;" id="wizardCardGrid">
+            <!-- 卡片 1: EC718PV -->
+            <div class="wizard-chip-card" id="wCard_ec718pv" onclick="selectWizardChip('ec718pv')">
+              <div class="wizard-card-badge" id="wBadge_ec718pv" style="display: none;">推荐</div>
+              <div class="wizard-card-title">Air780EPV / EP</div>
+              <div class="wizard-card-chip">EC718PV 旗舰架构</div>
+              <div class="wizard-card-desc">硬件 VoLTE 通话 · 双通道 · V2001 稳定底包</div>
+            </div>
+            <!-- 卡片 2: EC718PM -->
+            <div class="wizard-chip-card" id="wCard_ec718pm" onclick="selectWizardChip('ec718pm')">
+              <div class="wizard-card-badge" id="wBadge_ec718pm" style="display: none;">推荐</div>
+              <div class="wizard-card-title">Air780EPM</div>
+              <div class="wizard-card-chip">EC718PM 新一代</div>
+              <div class="wizard-card-desc">超低功耗 · V2050 103 标准底包 (严禁109)</div>
+            </div>
+            <!-- 卡片 3: EC618 -->
+            <div class="wizard-chip-card" id="wCard_ec618" onclick="selectWizardChip('ec618')">
+              <div class="wizard-card-badge" id="wBadge_ec618" style="display: none;">推荐</div>
+              <div class="wizard-card-title">Air780E / EC / 700E</div>
+              <div class="wizard-card-chip">EC618 百搭架构</div>
+              <div class="wizard-card-desc">全卡兼容 · V1105 基准底包 (时序防拒卡)</div>
+            </div>
+          </div>
+        </div>
+
+        <div id="flashtoolDropdownRow" style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.5rem; margin-bottom: 0.5rem;">
           <div class="form-group" style="margin-bottom: 0;">
             <label class="form-label">烧录模式</label>
             <select class="form-select" id="flashtoolModeSelect" onchange="onFlashtoolModeChange()">
@@ -2464,9 +2653,10 @@
           </div>
           <div class="form-group" style="margin-bottom: 0;">
             <label class="form-label">芯片架构 / 硬件型号</label>
-            <select class="form-select" id="flashtoolChipSelect">
-              <option value="ec718pv">EC718PV (Air780EPV / Air780EP)</option>
-              <option value="ec618">EC618 (Air780E / Air780EG / Air700E)</option>
+            <select class="form-select" id="flashtoolChipSelect" onchange="syncWizardFromSelect()">
+              <option value="ec718pv">EC718PV (Air780EPV / Air780EP · V2001 CLOUD)</option>
+              <option value="ec718pm">EC718PM (Air780EPM · V2050 103标准版)</option>
+              <option value="ec618">EC618 (Air780E / Air780EC / Air700E · V1105基准包)</option>
             </select>
           </div>
         </div>
@@ -2481,7 +2671,7 @@
         </div>
 
         <div id="flashBootGuidanceBox" style="display: none; background: rgba(245, 158, 11, 0.15); border: 1px solid rgba(245, 158, 11, 0.35); border-radius: var(--radius-sm); padding: 0.6rem 0.8rem; font-size: 0.72rem; color: #fbbf24; line-height: 1.5; margin-bottom: 0.5rem;">
-          ⚠️ <b>BOOT 下载模式提示：</b> 若软复位未自动切入下载模式，请按住开发板上的 <b>BOOT 键</b>，然后重新插拔 Type-C 数据线，模组将强制进入 Bootloader 烧录态 (17D1:0001)。
+          ⚠️ <b>硬件救砖与重试指引：</b> 若模组未能切入烧录态或中途拔线，出厂 BootROM 永久安全！请长按模组上的 <b>S1 (BOOT) 键</b> 并重新插拔 Type-C 数据线（设备管理器出现 <code>17D1:0001</code> 烧录口），然后点击下方按钮重试即可。
         </div>
 
         <div>
@@ -2617,9 +2807,9 @@
         </div>
 
         <div class="form-group" style="margin-bottom: 0.25rem;">
-          <label class="form-label">防扣费安全看门狗</label>
+          <label class="form-label">通话时限管理</label>
           <select class="form-input" id="dialTimeoutSelect" style="cursor: pointer;">
-            <option value="15" selected>⏱️ 对方振铃 15 秒后自动挂断 (推荐·双方0话费)</option>
+            <option value="15" selected>⏱️ 对方振铃 15 秒后自动挂断</option>
             <option value="25">⏱️ 对方振铃 25 秒后自动挂断</option>
             <option value="40">⏱️ 对方振铃 40 秒后自动挂断</option>
           </select>
@@ -2628,7 +2818,7 @@
         <div style="margin-top: 0.5rem; display: flex; align-items: center; gap: 0.4rem;">
           <input type="checkbox" id="dialHangupOnAnswer" checked style="accent-color: var(--accent-green); cursor: pointer;">
           <label for="dialHangupOnAnswer" style="font-size: 0.72rem; color: #94a3b8; cursor: pointer; user-select: none;">
-            对方一旦接听立即秒挂断（确保绝不产生通话费）
+            对方接听后立即挂断
           </label>
         </div>
 
@@ -2660,7 +2850,7 @@
 
   <!-- 7. 系统高级设置抽屉 (垂直撑满贴底，100% 对齐基准原型与截图 2) -->
   <div class="settings-drawer" id="drawerSettings">
-    <div class="modal-header" style="background: #111827;">
+    <div class="modal-header" style="background: transparent; border-bottom: 1px solid rgba(255, 255, 255, 0.06);">
       <div class="modal-title">
         <span>⚙️ 系统设置</span>
       </div>
@@ -2689,7 +2879,6 @@
           收到短信或验证码时，自动推送到您指定的手机 App：
         </div>
         <div style="display: flex; flex-direction: column; gap: 0.45rem;">
-
           <!-- 飞书 -->
           <div class="notify-channel-card">
             <div class="notify-channel-header">
@@ -2705,8 +2894,14 @@
                 </label>
               </div>
             </div>
-            <input type="text" class="form-input" id="cfg_feishu_url" placeholder="飞书 Webhook 链接 (https://open.feishu.cn/...)" value="">
-            <input type="text" class="form-input" id="cfg_feishu_secret" placeholder="安全加签密钥 (可选)" value="">
+            <div class="input-inline-wrap">
+              <input type="text" class="form-input" id="cfg_feishu_url" placeholder="飞书 Webhook 链接 (https://open.feishu.cn/...)" value="" style="padding-right: 52px;" oninput="onFieldInput('feishu', 'url')">
+              <button type="button" class="btn-inline-clear" id="btn_clear_feishu_url" onclick="clearField('feishu', 'url')" style="display:none;">清空</button>
+            </div>
+            <div class="input-inline-wrap">
+              <input type="text" class="form-input" id="cfg_feishu_secret" placeholder="安全加签密钥 (可选)" value="" style="padding-right: 52px;" oninput="onFieldInput('feishu', 'secret')">
+              <button type="button" class="btn-inline-clear" id="btn_clear_feishu_secret" onclick="clearField('feishu', 'secret')" style="display:none;">清空</button>
+            </div>
           </div>
 
           <!-- 钉钉 -->
@@ -2724,8 +2919,14 @@
                 </label>
               </div>
             </div>
-            <input type="text" class="form-input" id="cfg_dingtalk_url" placeholder="钉钉 Webhook 链接 (https://oapi.dingtalk.com/...)">
-            <input type="text" class="form-input" id="cfg_dingtalk_secret" placeholder="安全加签密钥 (可选)">
+            <div class="input-inline-wrap">
+              <input type="text" class="form-input" id="cfg_dingtalk_url" placeholder="钉钉 Webhook 链接 (https://oapi.dingtalk.com/...)" style="padding-right: 52px;" oninput="onFieldInput('dingtalk', 'url')">
+              <button type="button" class="btn-inline-clear" id="btn_clear_dingtalk_url" onclick="clearField('dingtalk', 'url')" style="display:none;">清空</button>
+            </div>
+            <div class="input-inline-wrap">
+              <input type="text" class="form-input" id="cfg_dingtalk_secret" placeholder="安全加签密钥 (可选)" style="padding-right: 52px;" oninput="onFieldInput('dingtalk', 'secret')">
+              <button type="button" class="btn-inline-clear" id="btn_clear_dingtalk_secret" onclick="clearField('dingtalk', 'secret')" style="display:none;">清空</button>
+            </div>
           </div>
 
           <!-- 企业微信 -->
@@ -2743,7 +2944,10 @@
                 </label>
               </div>
             </div>
-            <input type="text" class="form-input" id="cfg_wecom_url" placeholder="企业微信 Webhook 链接 (https://qyapi.weixin.qq.com/...)">
+            <div class="input-inline-wrap">
+              <input type="text" class="form-input" id="cfg_wecom_url" placeholder="企业微信 Webhook 链接 (https://qyapi.weixin.qq.com/...)" style="padding-right: 52px;" oninput="onFieldInput('wecom', 'url')">
+              <button type="button" class="btn-inline-clear" id="btn_clear_wecom_url" onclick="clearField('wecom', 'url')" style="display:none;">清空</button>
+            </div>
           </div>
 
           <!-- 苹果 Bark -->
@@ -2761,7 +2965,10 @@
                 </label>
               </div>
             </div>
-            <input type="text" class="form-input" id="cfg_bark_url" placeholder="Bark 推送链接 (https://api.day.app/...)">
+            <div class="input-inline-wrap">
+              <input type="text" class="form-input" id="cfg_bark_url" placeholder="Bark 推送链接 (https://api.day.app/...)" style="padding-right: 52px;" oninput="onFieldInput('bark', 'url')">
+              <button type="button" class="btn-inline-clear" id="btn_clear_bark_url" onclick="clearField('bark', 'url')" style="display:none;">清空</button>
+            </div>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.4rem;">
               <input type="text" class="form-input" id="cfg_bark_group" placeholder="通知分组 (默认: 短信网关)" value="4G短信网关">
               <input type="text" class="form-input" id="cfg_bark_sound" placeholder="提示铃声 (默认: minuet)" value="minuet">
@@ -2783,17 +2990,42 @@
                 </label>
               </div>
             </div>
-            <input type="text" class="form-input" id="cfg_webhook_url" placeholder="接收端 HTTP 接口地址 (http://...)">
+            <div class="input-inline-wrap">
+              <input type="text" class="form-input" id="cfg_webhook_url" placeholder="接收端 HTTP 接口地址 (http://...)" style="padding-right: 52px;" oninput="onFieldInput('webhook', 'url')">
+              <button type="button" class="btn-inline-clear" id="btn_clear_webhook_url" onclick="clearField('webhook', 'url')" style="display:none;">清空</button>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- 3. 运行策略与偏好 (100% 对齐原版截图 2) -->
+      <!-- 3. 运行策略与偏好 (AIR-58 两列网格) -->
       <div>
         <div class="detail-section-title">3. 运行策略与偏好</div>
-        <div style="display: flex; flex-direction: column; gap: 0.45rem; margin-top: 0.4rem;">
+        <div class="strategy-grid-container" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; margin-top: 0.4rem;">
 
-          <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-card); padding: 0.55rem 0.65rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+          <div class="strategy-item-card" style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-card); padding: 0.55rem 0.65rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+            <div>
+              <div style="font-size: 0.75rem; font-weight: 600; color: #f8fafc;">开机自动启动 (静默守护)</div>
+              <div style="font-size: 0.65rem; color: #94a3b8;">Windows 登录时自动常驻托盘守护，不弹大窗打扰</div>
+            </div>
+            <label class="mini-switch">
+              <input type="checkbox" id="cfg_autostart">
+              <span class="mini-slider"></span>
+            </label>
+          </div>
+
+          <div class="strategy-item-card" style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-card); padding: 0.55rem 0.65rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+            <div>
+              <div style="font-size: 0.75rem; font-weight: 600; color: #f8fafc;">防偷窥模式 (隐藏短信内容)</div>
+              <div style="font-size: 0.65rem; color: #94a3b8;">屏幕通知仅提示“收到新短信”，不直接暴露正文</div>
+            </div>
+            <label class="mini-switch">
+              <input type="checkbox" id="cfg_privacy_mode">
+              <span class="mini-slider"></span>
+            </label>
+          </div>
+
+          <div class="strategy-item-card" style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-card); padding: 0.55rem 0.65rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
             <div>
               <div style="font-size: 0.75rem; font-weight: 600; color: #f8fafc;">收到验证码自动复制</div>
               <div style="font-size: 0.65rem; color: #94a3b8;">新验证码到达时直接写入电脑剪贴板，无需手动点击</div>
@@ -2804,7 +3036,29 @@
             </label>
           </div>
 
-          <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-card); padding: 0.55rem 0.65rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+          <div class="strategy-item-card" style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-card); padding: 0.55rem 0.65rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+            <div>
+              <div style="font-size: 0.75rem; font-weight: 600; color: #f8fafc;">验证码到达提示音</div>
+              <div style="font-size: 0.65rem; color: #94a3b8;">捕获到登录验证码时播放清脆提醒音（零外部资源合成）</div>
+            </div>
+            <label class="mini-switch">
+              <input type="checkbox" checked id="cfg_play_sound">
+              <span class="mini-slider"></span>
+            </label>
+          </div>
+
+          <div class="strategy-item-card" style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-card); padding: 0.55rem 0.65rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+            <div>
+              <div style="font-size: 0.75rem; font-weight: 600; color: #f8fafc;">桌面屏幕右下角通知</div>
+              <div style="font-size: 0.65rem; color: #94a3b8;">收到新短信或验证码时，弹出原生系统 Toast 消息卡片</div>
+            </div>
+            <label class="mini-switch">
+              <input type="checkbox" checked id="cfg_desktop_notification">
+              <span class="mini-slider"></span>
+            </label>
+          </div>
+
+          <div class="strategy-item-card" style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-card); padding: 0.55rem 0.65rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
             <div>
               <div style="font-size: 0.75rem; font-weight: 600; color: #f8fafc;">设备离线自动保存短信</div>
               <div style="font-size: 0.65rem; color: #94a3b8;">即使电脑关机，设备硬件芯片也会自动暂存最新短信</div>
@@ -2815,59 +3069,172 @@
             </label>
           </div>
 
-          <div style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-card); padding: 0.55rem 0.65rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+          <div class="strategy-item-card strategy-item-full" style="grid-column: span 2; display: flex; align-items: center; justify-content: space-between; background: var(--bg-card); padding: 0.55rem 0.65rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
             <div>
-              <div style="font-size: 0.75rem; font-weight: 600; color: #f8fafc;">每日凌晨 04:00 自动重启维护</div>
-              <div style="font-size: 0.65rem; color: #94a3b8;">定时刷新网络连接，保障设备常年稳定不掉线</div>
+              <div style="font-size: 0.75rem; font-weight: 600; color: #f8fafc;">定时重启维护</div>
+              <div style="font-size: 0.65rem; color: #94a3b8;">定时刷新网络连接（默认关闭，保持常年稳定在线）</div>
             </div>
-            <label class="mini-switch">
-              <input type="checkbox" checked id="cfg_daily_reboot">
-              <span class="mini-slider"></span>
-            </label>
+            <div style="display: flex; align-items: center; gap: 0.55rem;">
+              <select id="cfg_daily_reboot_hour" class="form-input form-input-compact-select" style="padding: 0.15rem 0.35rem; font-size: 0.72rem; width: 78px; height: 26px; border-radius: 4px; border: 1px solid rgba(255,255,255,0.12); color: #f8fafc;" title="选择每日自动重启维护时间">
+                <option value="0">00:00</option><option value="1">01:00</option><option value="2">02:00</option><option value="3">03:00</option>
+                <option value="4" selected>04:00</option><option value="5">05:00</option><option value="6">06:00</option><option value="7">07:00</option>
+                <option value="8">08:00</option><option value="9">09:00</option><option value="10">10:00</option><option value="11">11:00</option>
+                <option value="12">12:00</option><option value="13">13:00</option><option value="14">14:00</option><option value="15">15:00</option>
+                <option value="16">16:00</option><option value="17">17:00</option><option value="18">18:00</option><option value="19">19:00</option>
+                <option value="20">20:00</option><option value="21">21:00</option><option value="22">22:00</option><option value="23">23:00</option>
+              </select>
+              <label class="mini-switch" title="开启/关闭定时重启维护">
+                <input type="checkbox" id="cfg_daily_reboot" onchange="toggleRebootHourSelect()">
+                <span class="mini-slider"></span>
+              </label>
+            </div>
           </div>
         </div>
       </div>
 
-      <!-- 4. AI 智能体通信服务 (MCP) -->
+      <!-- 4. 局域网访问与跨设备协作 (AIR-57 / AIR-62) -->
       <div>
-        <div class="detail-section-title">4. AI 智能体通信服务 (MCP)</div>
-        <div style="background: var(--bg-card); padding: 0.75rem 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-top: 0.4rem;">
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.4rem;">
-            <div style="display: flex; align-items: center; gap: 0.45rem;">
-              <span style="font-size: 1.1rem;">🤖</span>
-              <div>
-                <div style="font-size: 0.78rem; font-weight: 700; color: #f8fafc;">启用 MCP 通信服务</div>
-                <div style="font-size: 0.65rem; color: #94a3b8;">中枢端口 17800</div>
+        <div class="detail-section-title">4. 局域网访问与跨设备协作</div>
+        <div id="lan_access_card_box" style="background: var(--bg-card); padding: 0.75rem 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-top: 0.4rem; transition: border-color 0.2s ease;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.5rem;">
+            <div style="display: flex; align-items: center; gap: 0.45rem; min-width: 0; flex: 1;">
+              <span style="font-size: 1.1rem; flex-shrink: 0;">🌐</span>
+              <div style="min-width: 0; flex: 1;">
+                <div style="display: flex; align-items: center; gap: 0.4rem; flex-wrap: wrap;">
+                  <span style="font-size: 0.78rem; font-weight: 700; color: #f8fafc;">允许同局域网跨设备访问</span>
+                  <span id="lan_access_status_badge" style="font-size: 0.62rem; padding: 0.1rem 0.4rem; border-radius: 9999px; background: rgba(148, 163, 184, 0.15); color: #94a3b8; border: 1px solid rgba(148, 163, 184, 0.3);">⚪ 仅本机访问 (安全隔离)</span>
+                </div>
+                <div style="font-size: 0.65rem; color: #94a3b8; margin-top: 0.15rem;">关闭时仅电脑本机可访问，有效防止同 Wi-Fi 下他人偷窥短信</div>
               </div>
             </div>
-            <label class="mini-switch">
-              <input type="checkbox" id="cfg_mcp_enabled" onchange="updateMcpBadgeState()">
+            <label class="mini-switch" id="cfg_lan_access_switch_label" title="允许同局域网设备访问控制台">
+              <input type="checkbox" id="cfg_lan_access" onchange="updateLanAccessUiState()">
               <span class="mini-slider"></span>
             </label>
           </div>
-          <div style="display: flex; align-items: center; justify-content: space-between; margin-top: 0.45rem; padding-top: 0.45rem; border-top: 1px solid rgba(255,255,255,0.06);">
-            <span style="font-size: 0.68rem; color: #cbd5e1;">运行状态</span>
-            <span id="mcp_badge_status" style="font-size: 0.68rem; font-weight: 600; padding: 0.15rem 0.5rem; border-radius: 9999px; background: rgba(148,163,184,0.15); color: #94a3b8; border: 1px solid rgba(148,163,184,0.3);">
-              ⚪ 未启用 (安全隔离)
-            </span>
+
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; background: rgba(15, 23, 42, 0.5); padding: 0.45rem 0.65rem; border-radius: 6px; border: 1px dashed rgba(255, 255, 255, 0.08); margin-bottom: 0.35rem;">
+            <div style="min-width: 0; flex: 1;">
+              <div style="font-size: 0.62rem; color: #64748b; margin-bottom: 0.1rem;">跨设备访问地址：</div>
+              <div id="lan_guide_url_text" style="font-size: 0.68rem; color: #64748b; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">http://127.0.0.1:17801 (已关闭 · 仅本机安全可用)</div>
+            </div>
+            <button type="button" id="lan_copy_url_btn" class="btn btn-secondary btn-sm" onclick="copyLanUrl()" style="padding: 0.2rem 0.55rem; font-size: 0.68rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 0.2rem; flex-shrink: 0; white-space: nowrap; opacity: 0.4; cursor: not-allowed;" disabled>
+              <span>📋</span><span>复制地址</span>
+            </button>
           </div>
 
-          <!-- AI 智能体接入提示词 -->
-          <div style="margin-top: 0.6rem; padding-top: 0.55rem; border-top: 1px solid rgba(255,255,255,0.06);">
-            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.35rem;">
-              <span style="font-size: 0.68rem; font-weight: 600; color: #cbd5e1;">💬 给其它 AI 的提示词</span>
-              <button type="button" class="btn btn-secondary btn-sm" onclick="copyMcpPrompt()" style="padding: 0.15rem 0.5rem; font-size: 0.65rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 0.25rem;">
-                <span>📋</span><span>复制提示词</span>
+          <div id="lan_guide_tip_text" style="font-size: 0.65rem; color: #94a3b8; line-height: 1.45; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 0.45rem; margin-top: 0.4rem;">
+            提示：当前已关闭局域网访问，有效防止同一 Wi-Fi 下的其他人偷窥短信与验证码。如需使用手机查看，请开启上方开关。
+          </div>
+          <div id="lan_client_remote_warning" style="display: none; font-size: 0.65rem; color: #fbbf24; margin-top: 0.3rem;">
+            🔒 您当前正在通过外部设备访问，局域网访问权限仅限在电脑本机控制台修改。
+          </div>
+        </div>
+      </div>
+
+      <!-- 5. 数据维护与运行日志 (AIR-57) -->
+      <div>
+        <div class="detail-section-title">5. 数据维护与运行日志</div>
+        <div style="background: var(--bg-card); padding: 0.75rem 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.6rem;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;">
+            <div style="min-width: 0; flex: 1;">
+              <div style="font-size: 0.76rem; font-weight: 600; color: #f8fafc;">数据存储目录</div>
+              <div id="settings_data_dir_display" style="font-size: 0.65rem; color: #94a3b8; font-family: monospace; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">读取中…</div>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="openSystemFolder('data')" style="padding: 0.2rem 0.55rem; font-size: 0.68rem; border-radius: 4px; flex-shrink: 0; white-space: nowrap;">
+              📁 打开目录
+            </button>
+          </div>
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 0.5rem;">
+            <div style="min-width: 0; flex: 1;">
+              <div style="font-size: 0.76rem; font-weight: 600; color: #f8fafc;">运行日志占用</div>
+              <div id="settings_log_size_display" style="font-size: 0.65rem; color: #94a3b8; white-space: nowrap;">0 KB</div>
+            </div>
+            <div style="display: flex; gap: 0.35rem; flex-shrink: 0;">
+              <button type="button" class="btn btn-secondary btn-sm" onclick="openSystemFolder('logs')" style="padding: 0.2rem 0.45rem; font-size: 0.66rem; border-radius: 4px; white-space: nowrap;">
+                📁 查看日志
+              </button>
+              <button type="button" class="btn btn-secondary btn-sm" onclick="clearSystemLogs()" style="padding: 0.2rem 0.45rem; font-size: 0.66rem; border-radius: 4px; color: #f87171; white-space: nowrap;">
+                🧹 清理
               </button>
             </div>
-            <div id="mcp_prompt_box" onclick="copyMcpPrompt()" title="点击复制完整提示词" style="background: rgba(15,23,42,0.8); border: 1px dashed rgba(255,255,255,0.14); padding: 0.5rem 0.6rem; border-radius: 4px; font-size: 0.66rem; color: #94a3b8; line-height: 1.45; cursor: pointer; user-select: text; transition: border-color 0.2s;" onmouseenter="this.style.borderColor='rgba(56,189,248,0.4)'" onmouseleave="this.style.borderColor='rgba(255,255,255,0.14)'">
-              本地已连接合宙 4G 蜂窝通信网关（中枢端口 127.0.0.1:17800）。支持调用蜂窝工具 (cellular_*) 查收最新短信与验证码、4G代发短信、VoLTE电话外呼及查看模组看板。当需要接收验证码时请优先调用 cellular_wait_for_otp。
+          </div>
+        </div>
+      </div>
+
+      <!-- 6. 关于数字蜂巢与在线更新 (AIR-57) -->
+      <div id="about_section_anchor">
+        <div class="detail-section-title">6. 关于数字蜂巢 · CellHive</div>
+        <div style="background: var(--bg-card); padding: 0.85rem 0.95rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-top: 0.4rem;">
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.6rem;">
+            <div style="display: flex; align-items: center; gap: 0.55rem; min-width: 0; flex: 1;">
+              <div style="width: 32px; height: 32px; border-radius: 8px; background: rgba(56,189,248,0.15); display: flex; align-items: center; justify-content: center; font-size: 1.15rem; border: 1px solid rgba(56,189,248,0.3); flex-shrink: 0;">
+                🐝
+              </div>
+              <div style="min-width: 0; flex: 1;">
+                <div style="font-size: 0.82rem; font-weight: 700; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">数字蜂巢 CellHive</div>
+                <div id="about_version_label" style="font-size: 0.66rem; color: #38bdf8; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">v1.3.0 · 官方绿色版</div>
+              </div>
+            </div>
+            <button type="button" id="btn_check_update" class="btn btn-secondary btn-sm" onclick="checkGitHubUpdate()" style="padding: 0.25rem 0.55rem; font-size: 0.68rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 0.25rem; flex-shrink: 0; white-space: nowrap;">
+              <span>🔄</span><span>检查更新</span>
+            </button>
+          </div>
+          <div id="about_update_result_box" style="display:none; margin-bottom:0.5rem; padding:0.45rem 0.6rem; border-radius:4px; font-size:0.68rem;"></div>
+          <div style="font-size: 0.66rem; color: #94a3b8; line-height: 1.5; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 0.5rem;">
+            全场景硬件即插即用，原生适配 Air780 系列 4G 模组与短信外呼中枢。完全免安装绿色守护，保护个人隐私与通信自由。
+            <div style="margin-top: 0.4rem; display: flex; gap: 0.8rem;">
+              <a href="https://github.com/ocean1798/Air780EPV-Smart-Gateway" target="_blank" rel="noopener noreferrer" style="color: #38bdf8; text-decoration: none; display: inline-flex; align-items: center; gap: 0.2rem;">
+                <span>🌐</span><span>GitHub 开源主页</span>
+              </a>
+              <a href="https://github.com/ocean1798/Air780EPV-Smart-Gateway/releases" target="_blank" rel="noopener noreferrer" style="color: #38bdf8; text-decoration: none; display: inline-flex; align-items: center; gap: 0.2rem;">
+                <span>📦</span><span>版本发布历史</span>
+              </a>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- 7. AI 智能体通信服务 (MCP) -->
+      <div>
+        <div class="detail-section-title">7. AI 智能体通信服务 (MCP)</div>
+        <div style="background: var(--bg-card); padding: 0.75rem 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-top: 0.4rem;">
+          <div style="display: flex; align-items: center; justify-content: space-between;">
+            <div style="display: flex; align-items: center; gap: 0.45rem;">
+              <span style="font-size: 1.1rem;">🤖</span>
+              <div>
+                <div style="font-size: 0.78rem; font-weight: 700; color: #f8fafc;">启用外部 AI 智能体通信 (MCP)</div>
+                <div style="font-size: 0.65rem; color: #94a3b8;">中枢端口 17800 · 允许 Claude / Cursor 等 AI 助手调用蜂窝模组</div>
+              </div>
+            </div>
+            <label class="mini-switch" title="开启/关闭 MCP 通信服务">
+              <input type="checkbox" id="cfg_mcp_enabled">
+              <span class="mini-slider"></span>
+            </label>
+          </div>
+
+          <!-- 双模接入：Agent 自动化安装指令与手动 JSON 配置 -->
+          <div style="margin-top: 0.65rem; padding-top: 0.55rem; border-top: 1px solid rgba(255,255,255,0.06);">
+            <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.35rem; flex-wrap: wrap; gap: 0.4rem;">
+              <span style="font-size: 0.68rem; font-weight: 600; color: #cbd5e1;">🤖 AI 智能体接入配置</span>
+              <div style="display: flex; gap: 0.35rem;">
+                <button type="button" class="btn btn-primary btn-sm" onclick="copyMcpAgentPrompt()" style="padding: 0.15rem 0.45rem; font-size: 0.65rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 0.2rem;">
+                  <span>🤖</span><span>复制 Agent 安装指令</span>
+                </button>
+                <button type="button" class="btn btn-secondary btn-sm" onclick="copyMcpConfig()" style="padding: 0.15rem 0.45rem; font-size: 0.65rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 0.2rem;">
+                  <span>📋</span><span>复制 JSON</span>
+                </button>
+              </div>
+            </div>
+            <pre id="mcp_config_box" style="background: rgba(15,23,42,0.8); border: 1px dashed rgba(255,255,255,0.14); padding: 0.5rem 0.6rem; border-radius: 4px; font-size: 0.65rem; color: #94a3b8; font-family: monospace; line-height: 1.4; user-select: text; white-space: pre-wrap; margin: 0;"></pre>
+            <div style="margin-top: 0.35rem; font-size: 0.62rem; color: #64748b; line-height: 1.35;">
+              💡 提示：复制 Agent 安装指令可直接发送给 Cursor、Claude Code、Cline 等助手自动识别写入；亦可复制 JSON 手动粘贴至客户端配置文件。
             </div>
           </div>
         </div>
       </div>
     </div>
-    <div class="modal-footer" style="background: #111827; padding: 0.85rem 1.25rem; border-top: 1px solid var(--border-color); display: flex; justify-content: flex-end; align-items: center; gap: 0.85rem;">
+    <div class="modal-footer" style="background: transparent; padding: 0.85rem 1.25rem; border-top: 1px solid rgba(255, 255, 255, 0.06); display: flex; justify-content: flex-end; align-items: center; gap: 0.85rem;">
       <button class="btn-text-cancel" onclick="closeSettingsDrawer()">取消</button>
       <button class="btn-primary-save" onclick="saveSystemSettings()">💾 保存配置</button>
     </div>
@@ -3261,6 +3628,9 @@
         const res = await fetch(endpoint, opts);
         return await res.json();
       } catch (err) {
+        if (endpoint === "/api/sms/send") {
+          return { ok: false, code: "unknown", error: "发送请求的 HTTP 回执中断" };
+        }
         return { ok: false, error: err.message };
       }
     }
@@ -3327,7 +3697,19 @@
     }
 
     function copyTopOtp() {
-      if (state.latestOtp) copyOtp(state.latestOtp);
+      if (!state.latestOtp) return;
+      copyToClipboard(state.latestOtp, `⚡ 已复制验证码: ${state.latestOtp}`);
+      const capsule = document.getElementById("topOtpCapsule");
+      const timeEl = document.getElementById("topOtpTime");
+      if (capsule) {
+        capsule.classList.add("copied");
+        const prevText = timeEl ? timeEl.textContent : "";
+        if (timeEl) timeEl.textContent = "已复制";
+        setTimeout(() => {
+          capsule.classList.remove("copied");
+          if (timeEl) timeEl.textContent = prevText;
+        }, 800);
+      }
     }
 
     function extractOtpClient(content) {
@@ -3650,16 +4032,16 @@
           const cnt = Object.keys(slotDataMap).length;
           badge.textContent = cnt > 1 ? `${cnt} 模组就绪` : (cnt === 1 ? "1 模组就绪" : "通信中枢在线");
         }
-        if (desc) desc.textContent = "中枢运行正常 · 端口 17800";
+        if (desc) desc.textContent = "上位机推送";
         if (wasOnline === false) {
-          showToast("🟢 4G 通信网关已连接上线", "success");
+          showToast("🟢 数字蜂巢已连接上线", "success");
         }
       } else {
         if (badge) {
           badge.className = "header-cluster-badge offline";
           badge.textContent = "设备离线";
         }
-        if (desc) desc.textContent = reason || "通信中枢离线 · 端口 17800";
+        if (desc) desc.textContent = reason || "服务离线";
 
         const container = document.getElementById("slotCardsContainer");
         if (container) {
@@ -3748,7 +4130,7 @@
               <div style="font-size: 0.72rem; font-weight: 600; color: #e2e8f0;">电脑通过此卡上网</div>
               <div style="font-size: 0.65rem; color: #64748b;">开启后电脑直接用这张卡的流量联网</div>
             </div>
-            <label class="mini-switch" title="开启/关闭 4G 随身上网 (默认关闭防偷跑流量)">
+            <label class="mini-switch" title="开启/关闭 4G 随身上网 (USB 网络共享)">
               <input type="checkbox" id="switchRndis${slotIdx}" onchange="toggleRndis('${slotId}', this.checked)">
               <span class="mini-slider"></span>
             </label>
@@ -3780,7 +4162,18 @@
       `;
     }
 
+    function isValidIccid(iccid) {
+      if (!iccid) return false;
+      const s = String(iccid).trim().replace(/[Ff]$/, '');
+      return /^89\d{17,18}$/.test(s);
+    }
+
     function renderSingleSlot(data, slotIdx) {
+      function isValidIccid(iccid) {
+        if (!iccid) return false;
+        const s = String(iccid).trim().replace(/[Ff]$/, '');
+        return /^89\d{17,18}$/.test(s);
+      }
       const slotId = data.slot || `slot_${slotIdx}`;
       const isOnline = (data.online !== false);
 
@@ -3805,14 +4198,14 @@
         slotCache.smsMax = data.sms_max;
       }
 
-      // 检查是否显式未插卡
-      const isExplicitNoSim = (data.iccid === "未插卡" || data.sim_ready === false);
-      const hasSim = isExplicitNoSim ? false : Boolean(
-        (data.iccid && data.iccid.trim().length >= 8 && data.iccid !== "未插卡") ||
-        (slotCache.iccid && slotCache.iccid.length >= 8 && slotCache.iccid !== "未插卡") ||
-        (data.net_ready === true) ||
-        (data.csq && data.csq > 0)
-      );
+      // 检查当前上报帧是否具备合法卡号与网络
+      const frameIccid = (data.iccid !== undefined && data.iccid !== null) ? String(data.iccid).trim() : null;
+      const frameHasValidIccid = isValidIccid(frameIccid);
+      const frameHasPhone = Boolean(data.phone && String(data.phone).trim().length >= 3);
+      const frameHasNetwork = Boolean(data.net_ready === true || (data.csq && parseInt(data.csq) > 0));
+
+      // 显式无卡：显式标记未插卡、SIM芯片未就绪，或者当前上报无卡号且完全无网络驻网信号
+      const isExplicitNoSim = (data.iccid === "未插卡" || data.sim_ready === false || (frameIccid === "" && !frameHasNetwork));
 
       // 1. 缓存失效防线：若设备离线或明确显式未插卡，精准清空 SIM 级缓存，杜绝换卡/拔卡后残留历史脏数据
       if (!isOnline || isExplicitNoSim) {
@@ -3827,8 +4220,10 @@
       if (data.imei && String(data.imei).trim()) {
         slotCache.imei = String(data.imei).trim();
       }
-      if (hasSim && data.iccid && String(data.iccid).trim() && data.iccid !== "未插卡") {
-        slotCache.iccid = String(data.iccid).trim();
+      if (frameHasValidIccid) {
+        slotCache.iccid = frameIccid.replace(/[Ff]$/, '');
+      } else if (!isValidIccid(slotCache.iccid)) {
+        slotCache.iccid = "";
       }
       if (data.version || data.current_version) {
         slotCache.version = (data.version || data.current_version).trim();
@@ -3839,6 +4234,9 @@
       if (data.port) {
         slotCache.port = data.port;
       }
+
+      const hasValidIccid = frameHasValidIccid || isValidIccid(slotCache.iccid);
+      const hasSim = !isExplicitNoSim && (hasValidIccid || data.net_ready === true || (frameHasNetwork && frameHasPhone));
 
       const model = data.model || slotCache.model || data.bsp || "Air780";
       // 剥离多余“合宙 ”前缀，净化为纯净型号名 (如 Air780EPV / Air780E)，释放 30px 横向空间
@@ -3893,11 +4291,11 @@
       const dataSwitch = document.getElementById(`switchData${slotIdx}`);
       const btnSend = document.getElementById(`btnSendSlot${slotIdx}`);
 
-      // 动态控制拨号入口 (AIR-30)
+      // 动态控制拨号入口 (AIR-30 / AIR-47: 纯粹由硬件自省能力字典驱动)
       const btnCall = document.getElementById(`btnCallSlot${slotIdx}`);
       const callTip = document.getElementById(`slot${slotIdx}CallTip`);
       const caps = data.capabilities || {};
-      const hasVolte = (caps.volte === true) || (model.includes("EPV") || model.includes("EHV"));
+      const hasVolte = caps.volte === true;
 
       if (btnCall) {
         if (!isOnline) {
@@ -3961,12 +4359,20 @@
         }
         let fmtNum = formatPhone344(rawNum);
         if (!fmtNum) {
-          fmtNum = (slotDataMap[slotId] && slotDataMap[slotId].sim && slotDataMap[slotId].sim !== "号码就绪") ? slotDataMap[slotId].sim : "物联卡 (无本机号)";
+          if (hasSim && hasValidIccid) {
+            fmtNum = (slotDataMap[slotId] && slotDataMap[slotId].sim && slotDataMap[slotId].sim !== "号码就绪") ? slotDataMap[slotId].sim : "物联卡 (无本机号)";
+          } else {
+            fmtNum = "";
+          }
         }
         if (phoneBtn) {
-          safeUpdateStyle(phoneBtn, "display", "inline-flex");
-          safeUpdateText(phoneText, fmtNum);
-          slotDataMap[slotId].sim = fmtNum;
+          if (fmtNum) {
+            safeUpdateStyle(phoneBtn, "display", "inline-flex");
+            safeUpdateText(phoneText, fmtNum);
+            slotDataMap[slotId].sim = fmtNum;
+          } else {
+            safeUpdateStyle(phoneBtn, "display", "none");
+          }
         }
         if (rndisSwitch) {
           rndisSwitch.disabled = !isOnline;
@@ -4322,6 +4728,23 @@
       }
     }
 
+    function smsTimestampMs(sms) {
+      const value = Number(sms && sms.timestamp);
+      if (!Number.isFinite(value)) return null;
+      if (value >= 1e11 && value < 1e14) return value;
+      if (value >= 1e9 && value < 1e11) return value * 1000;
+      return null;
+    }
+
+    function smsLocalTime(sms) {
+      const timestamp = smsTimestampMs(sms);
+      if (timestamp === null) return sms.time || sms.received_at || "时间未知";
+      const date = new Date(timestamp);
+      const pad = value => String(value).padStart(2, "0");
+      return date.getFullYear() + "-" + pad(date.getMonth() + 1) + "-" + pad(date.getDate()) +
+        " " + pad(date.getHours()) + ":" + pad(date.getMinutes()) + ":" + pad(date.getSeconds());
+    }
+
     function renderSmsList(items) {
       const container = document.getElementById("smsFeedContainer");
       if (!container) return;
@@ -4382,11 +4805,12 @@
 
       let latestOtp = null;
       let latestOtpSlot = null;
+      let latestOtpTimestamp = null;
 
       displayItems.forEach(sms => {
         const sender = sms.sender || sms.phone || "10010";
         const content = sms.content || "";
-        const timeStr = sms.time || sms.received_at || "刚刚";
+        const timeStr = smsLocalTime(sms);
         const otp = sms.otp || extractOtpClient(content);
         const displayTag = getSlotDisplayTag(sms.slot, sms);
         const brandInfo = FeedFormatter.extractSender(content, sender);
@@ -4395,6 +4819,7 @@
         if (otp && !latestOtp) {
           latestOtp = otp;
           latestOtpSlot = displayTag;
+          latestOtpTimestamp = smsTimestampMs(sms);
         }
 
         const card = document.createElement("div");
@@ -4480,32 +4905,74 @@
         container.appendChild(endDiv);
       }
 
-      const slotHint = latestOtpSlot ? `来自 ${latestOtpSlot} · 点击复制` : "来自当前卡槽 · 点击复制";
-      updateTopOtpVisual(latestOtp, slotHint);
+      const slotHint = latestOtpSlot || "通信模组";
+      updateTopOtpVisual(latestOtp, slotHint, latestOtpTimestamp);
     }
 
-    function updateTopOtpVisual(otp, slotText = "来自 卡 1 · 点击复制") {
+    function updateTopOtpVisual(otp, slotLabel = "通信模组", timestamp = null) {
       const capsule = document.getElementById("topOtpCapsule");
       const otpVal = document.getElementById("topOtpValue");
-      const slotHint = document.getElementById("topOtpSlotHint");
       if (!capsule || !otpVal) return;
 
-      const wasNew = (otp && otp !== state.latestOtp);
-      state.latestOtp = otp;
-      if (otp) {
-        capsule.style.display = "flex";
-        otpVal.textContent = otp;
-        if (slotHint) slotHint.textContent = slotText;
-
-        if (wasNew) {
-          EventBus.emit("otp:received", {
-            code: otp,
-            slotLabel: slotText.replace(" · 点击复制", "").replace("来自 ", ""),
-            timestamp: Date.now()
-          });
-        }
-      } else {
+      if (!otp) {
+        state.latestOtp = null;
+        state.latestOtpSlot = null;
+        state.latestOtpTimestamp = null;
         capsule.style.display = "none";
+        return;
+      }
+
+      const wasNew = (otp !== state.latestOtp);
+      state.latestOtp = otp;
+      state.latestOtpSlot = slotLabel || "通信模组";
+      state.latestOtpTimestamp = timestamp || null;
+
+      capsule.style.display = "inline-flex";
+      otpVal.textContent = otp;
+      renderTopOtpFreshness();
+
+      if (wasNew) {
+        EventBus.emit("otp:received", {
+          code: otp,
+          slotLabel: String(state.latestOtpSlot).replace(/^来自\s*/, "").replace(/\s*·.*$/, ""),
+          timestamp: state.latestOtpTimestamp
+        });
+      }
+    }
+
+    function renderTopOtpFreshness() {
+      const capsule = document.getElementById("topOtpCapsule");
+      const timeEl = document.getElementById("topOtpTime");
+      if (!capsule || !state.latestOtp) return;
+
+      if (!state.latestOtpTimestamp) {
+        if (timeEl && !capsule.classList.contains("copied")) timeEl.textContent = "时间未知";
+        return;
+      }
+      const now = Date.now();
+      const diffMs = Math.max(0, now - state.latestOtpTimestamp);
+      const diffSec = Math.floor(diffMs / 1000);
+      const diffMin = Math.floor(diffSec / 60);
+
+      let timeText = "刚刚";
+      if (diffMin >= 60) {
+        const diffHr = Math.floor(diffMin / 60);
+        timeText = `${diffHr}h`;
+      } else if (diffMin >= 1) {
+        timeText = `${diffMin}m`;
+      }
+
+      if (timeEl && !capsule.classList.contains("copied")) {
+        timeEl.textContent = timeText;
+      }
+
+      const slot = state.latestOtpSlot || "通信模组";
+      if (diffMin >= 15) {
+        capsule.classList.add("stale");
+        capsule.setAttribute("title", `来自 ${slot} · 历史验证码 (已超过15分钟) · 点击复制`);
+      } else {
+        capsule.classList.remove("stale");
+        capsule.setAttribute("title", `来自 ${slot} · ${timeText}前接收 · 点击复制`);
       }
     }
 
@@ -4573,7 +5040,7 @@
     // =========================================================
     // 5.1 VoLTE 电话拨号交互 (AIR-30)
     // =========================================================
-    let activeDialSlot = "slot_2";
+    let activeDialSlot = "slot_1";
     let dialWatchTimer = null;
     let dialRemainSec = 15;
 
@@ -4658,7 +5125,7 @@
           dialWatchTimer = null;
           resetDialModalUI();
           closeModal("modalDialCall");
-          showToast("呼叫已达防扣费时限，已自动挂断（双方 0 话费）", "success");
+          showToast("呼叫已超时，已自动挂断", "info");
         } else {
           if (countText) countText.textContent = `对方手机振铃中，看门狗将在 ${dialRemainSec} 秒后自动挂机`;
         }
@@ -4746,58 +5213,118 @@
         if (state.isLive) {
           const res = await apiFetch("/api/sms/send", "POST", { phone, content, slot });
           if (res && res.ok) {
-            showToast(`✅ 短信已成功发出 (发往: ${phone})`, "success");
+            showToast(`短信请求已提交，发送结果待确认（${phone}）。请勿重复发送。`, "info");
             fetchSmsHistory();
           } else {
-            showToast(`❌ 发送失败: ${(res && res.error) || '射频响应超时'}`, "danger");
+            if (res && (res.code === "unknown" || res.code === -408)) {
+              showToast("短信发送结果未知，请勿重复发送；先核对这次请求。", "info");
+            } else {
+              showToast(`❌ 发送失败: ${(res && res.error) || '请求未被设备接受'}`, "danger");
+            }
           }
         } else {
           showToast("❌ 无法连接到中枢服务", "danger");
         }
       } catch (err) {
-        showToast("❌ 发送异常: " + err.message, "danger");
+        showToast("短信请求可能已到设备，但回执中断，结果未知。请勿重复发送。", "info");
       } finally {
         setTimeout(() => { isSmsSending = false; }, 1000);
       }
     }
 
     // =========================================================
-    // 11. 系统设置抽屉
     // =========================================================
+    // 11. 系统设置抽屉 (AIR-58 内嵌清空与两列排布)
+    // =========================================================
+    function clearField(channel, field) {
+      if (!state.notifyClearFields) state.notifyClearFields = {};
+      if (!state.notifyClearFields[channel]) state.notifyClearFields[channel] = [];
+      if (!state.notifyClearFields[channel].includes(field)) state.notifyClearFields[channel].push(field);
+      const input = document.getElementById(`cfg_${channel}_${field}`);
+      const btn = document.getElementById(`btn_clear_${channel}_${field}`);
+      if (input) {
+        input.value = "";
+        input.placeholder = "已标记清除 (保存后生效)";
+      }
+      if (btn) btn.style.display = "none";
+      if (field === "url") {
+        const enable = document.getElementById(`cfg_${channel}_enable`);
+        if (enable) enable.checked = false;
+      }
+    }
+
+    function onFieldInput(channel, field) {
+      const btn = document.getElementById(`btn_clear_${channel}_${field}`);
+      if (btn) btn.style.display = "none";
+      if (state.notifyClearFields && state.notifyClearFields[channel]) {
+        state.notifyClearFields[channel] = state.notifyClearFields[channel].filter(f => f !== field);
+      }
+    }
+
+    function setFieldConfigured(channel, field, isConfigured, placeholderText) {
+      const el = document.getElementById(`cfg_${channel}_${field}`);
+      const btn = document.getElementById(`btn_clear_${channel}_${field}`);
+      if (el) {
+        el.value = "";
+        el.placeholder = isConfigured ? "已配置，留空保留" : placeholderText;
+      }
+      if (btn) {
+        btn.style.display = isConfigured ? "block" : "none";
+      }
+    }
+
+    function notifyFormSnapshot() {
+      const ids = ["cfg_feishu_enable", "cfg_feishu_url", "cfg_feishu_secret",
+        "cfg_dingtalk_enable", "cfg_dingtalk_url", "cfg_dingtalk_secret",
+        "cfg_wecom_enable", "cfg_wecom_url", "cfg_bark_enable", "cfg_bark_url",
+        "cfg_bark_group", "cfg_bark_sound", "cfg_webhook_enable", "cfg_webhook_url",
+        "cfg_autostart", "cfg_auto_copy_otp", "cfg_desktop_notification", "cfg_privacy_mode",
+        "cfg_play_sound", "cfg_store_on_board", "cfg_daily_reboot", "cfg_daily_reboot_hour", "cfg_lan_access", "cfg_mcp_enabled"];
+      return JSON.stringify([ids.map(id => {
+        const el = document.getElementById(id);
+        return el ? (el.type === "checkbox" ? el.checked : el.value) : null;
+      }), state.notifyClearFields || {}]);
+    }
+
     async function loadConfigDrawerData() {
       if (!state.isLive) return;
+      state.notifyClearFields = {};
+      state.notifySavedDraftSnapshot = null;
       try {
         const res = await apiFetch("/api/config/notify");
         if (res && res.ok && res.data) {
           const d = res.data;
           if (d.feishu) {
             const el1 = document.getElementById("cfg_feishu_enable"); if (el1) el1.checked = Boolean(d.feishu.enable);
-            const el2 = document.getElementById("cfg_feishu_url"); if (el2) el2.value = d.feishu.url || "";
-            const el3 = document.getElementById("cfg_feishu_secret"); if (el3) el3.value = d.feishu.secret || "";
+            setFieldConfigured("feishu", "url", Boolean(d.feishu.url_configured), "飞书 Webhook 链接 (https://open.feishu.cn/...)");
+            setFieldConfigured("feishu", "secret", Boolean(d.feishu.secret_configured), "安全加签密钥 (可选)");
           }
           if (d.dingtalk) {
             const el1 = document.getElementById("cfg_dingtalk_enable"); if (el1) el1.checked = Boolean(d.dingtalk.enable);
-            const el2 = document.getElementById("cfg_dingtalk_url"); if (el2) el2.value = d.dingtalk.url || "";
-            const el3 = document.getElementById("cfg_dingtalk_secret"); if (el3) el3.value = d.dingtalk.secret || "";
+            setFieldConfigured("dingtalk", "url", Boolean(d.dingtalk.url_configured), "钉钉 Webhook 链接 (https://oapi.dingtalk.com/...)");
+            setFieldConfigured("dingtalk", "secret", Boolean(d.dingtalk.secret_configured), "安全加签密钥 (可选)");
           }
           if (d.wecom) {
             const el1 = document.getElementById("cfg_wecom_enable"); if (el1) el1.checked = Boolean(d.wecom.enable);
-            const el2 = document.getElementById("cfg_wecom_url"); if (el2) el2.value = d.wecom.url || "";
+            setFieldConfigured("wecom", "url", Boolean(d.wecom.url_configured), "企业微信 Webhook 链接 (https://qyapi.weixin.qq.com/...)");
           }
           if (d.bark) {
             const el1 = document.getElementById("cfg_bark_enable"); if (el1) el1.checked = Boolean(d.bark.enable);
-            const el2 = document.getElementById("cfg_bark_url"); if (el2) el2.value = d.bark.url || "";
+            setFieldConfigured("bark", "url", Boolean(d.bark.url_configured), "Bark 推送链接 (https://api.day.app/...)");
             const el3 = document.getElementById("cfg_bark_group"); if (el3 && d.bark.group) el3.value = d.bark.group;
             const el4 = document.getElementById("cfg_bark_sound"); if (el4 && d.bark.sound) el4.value = d.bark.sound;
           }
           if (d.webhook) {
             const el1 = document.getElementById("cfg_webhook_enable"); if (el1) el1.checked = Boolean(d.webhook.enable);
-            const el2 = document.getElementById("cfg_webhook_url"); if (el2) el2.value = d.webhook.url || "";
+            setFieldConfigured("webhook", "url", Boolean(d.webhook.url_configured), "接收端 HTTP 接口地址 (http://...)");
           }
           if (d.system) {
             const el1 = document.getElementById("cfg_auto_copy_otp"); if (el1 && d.system.auto_copy_otp !== undefined) el1.checked = Boolean(d.system.auto_copy_otp);
             const el2 = document.getElementById("cfg_store_on_board"); if (el2 && d.system.store_on_board !== undefined) el2.checked = Boolean(d.system.store_on_board);
             const el3 = document.getElementById("cfg_daily_reboot"); if (el3 && d.system.daily_reboot !== undefined) el3.checked = Boolean(d.system.daily_reboot);
+            const el4 = document.getElementById("cfg_desktop_notification"); if (el4 && d.system.desktop_notification !== undefined) el4.checked = Boolean(d.system.desktop_notification);
+            const el5 = document.getElementById("cfg_privacy_mode"); if (el5 && d.system.privacy_mode !== undefined) el5.checked = Boolean(d.system.privacy_mode);
+            const el6 = document.getElementById("cfg_play_sound"); if (el6 && d.system.play_sound !== undefined) el6.checked = Boolean(d.system.play_sound);
           }
           if (d.mcp) {
             const el = document.getElementById("cfg_mcp_enabled");
@@ -4805,44 +5332,151 @@
               el.checked = Boolean(d.mcp.enabled);
             }
           }
-          updateMcpBadgeState();
+          toggleRebootHourSelect();
+          state.notifySavedDraftSnapshot = notifyFormSnapshot();
+        }
+      } catch (e) {}
+
+      // 加载 AIR-57 实时系统设置 (自启动、局域网、目录与日志、版本)
+      try {
+        const sysRes = await apiFetch("/api/system/settings");
+        if (sysRes && sysRes.ok && sysRes.data) {
+          const sd = sysRes.data;
+          const elAutostart = document.getElementById("cfg_autostart");
+          if (elAutostart && sd.autostart !== undefined) elAutostart.checked = Boolean(sd.autostart);
+
+          const elCopy = document.getElementById("cfg_auto_copy_otp");
+          if (elCopy && sd.auto_copy_otp !== undefined) elCopy.checked = Boolean(sd.auto_copy_otp);
+
+          const elNotif = document.getElementById("cfg_desktop_notification");
+          if (elNotif && sd.desktop_notification !== undefined) elNotif.checked = Boolean(sd.desktop_notification);
+
+          const elPriv = document.getElementById("cfg_privacy_mode");
+          if (elPriv && sd.privacy_mode !== undefined) elPriv.checked = Boolean(sd.privacy_mode);
+
+          const elSound = document.getElementById("cfg_play_sound");
+          if (elSound && sd.play_sound !== undefined) elSound.checked = Boolean(sd.play_sound);
+
+          const elStore = document.getElementById("cfg_store_on_board");
+          if (elStore && sd.store_on_board !== undefined) elStore.checked = Boolean(sd.store_on_board);
+
+          const elReboot = document.getElementById("cfg_daily_reboot");
+          if (elReboot && sd.daily_reboot !== undefined) elReboot.checked = Boolean(sd.daily_reboot);
+
+          const elHour = document.getElementById("cfg_daily_reboot_hour");
+          if (elHour) {
+            if (elHour.options.length === 0) {
+              for (let h = 0; h < 24; h++) {
+                const opt = document.createElement("option");
+                opt.value = String(h);
+                opt.textContent = `${String(h).padStart(2, '0')}:00`;
+                elHour.appendChild(opt);
+              }
+            }
+            const curHour = (sd.daily_reboot_hour !== undefined) ? Number(sd.daily_reboot_hour) : 4;
+            elHour.value = String(curHour >= 0 && curHour <= 23 ? curHour : 4);
+          }
+          toggleRebootHourSelect();
+
+          // 显式触发渲染真实 MCP 路径与双模配置
+          renderMcpConfig(sd.mcp_server_path);
+
+          // 局域网跨设备开关与权限呈现 (AIR-62)
+          state.currentLanUrlRaw = sd.lan_url || `http://${sd.lan_ip || "127.0.0.1"}:17801`;
+          state.isCurrentClientLocal = sd.is_current_client_local !== undefined ? Boolean(sd.is_current_client_local) : true;
+
+          const elLanChk = document.getElementById("cfg_lan_access");
+          if (elLanChk && sd.lan_access !== undefined) {
+            elLanChk.checked = Boolean(sd.lan_access);
+          }
+          if (elLanChk && !state.isCurrentClientLocal) {
+            elLanChk.disabled = true;
+            const elSwitchLabel = document.getElementById("cfg_lan_access_switch_label");
+            if (elSwitchLabel) {
+              elSwitchLabel.style.opacity = "0.4";
+              elSwitchLabel.style.cursor = "not-allowed";
+              elSwitchLabel.title = "局域网访问权限仅限在电脑本机控制台修改";
+            }
+            const elRemoteWarn = document.getElementById("lan_client_remote_warning");
+            if (elRemoteWarn) elRemoteWarn.style.display = "block";
+          }
+          updateLanAccessUiState();
+
+          // 目录与日志
+          const elDataDir = document.getElementById("settings_data_dir_display");
+          if (elDataDir) {
+            elDataDir.textContent = sd.data_dir || "—";
+            elDataDir.title = sd.data_dir || "";
+          }
+          const elLogSize = document.getElementById("settings_log_size_display");
+          if (elLogSize) elLogSize.textContent = sd.log_size_human || "0 KB";
+
+          // 关于版本铭牌
+          const elVer = document.getElementById("about_version_label");
+          if (elVer) {
+            elVer.textContent = `v${sd.version || "1.3.0"} · ${sd.build_type === "standalone_exe" ? "官方免安装绿色版" : "源码开发版"}`;
+          }
+          state.appCurrentVersion = sd.version || "1.3.0";
+          state.notifySavedDraftSnapshot = notifyFormSnapshot();
         }
       } catch (e) {}
     }
 
-    const MCP_PROMPT_TEXT = "本地已连接合宙 4G 蜂窝通信网关（中枢端口 127.0.0.1:17800）。支持调用蜂窝工具 (cellular_*) 查收最新短信与验证码、4G代发短信、VoLTE电话外呼及查看模组看板。当需要接收验证码时请优先调用 cellular_wait_for_otp。";
+    let currentMcpServerPath = "";
 
-    function copyMcpPrompt() {
-      copyToClipboard(MCP_PROMPT_TEXT, "已复制 AI 提示词");
+    function toggleRebootHourSelect() {
+      const chk = document.getElementById("cfg_daily_reboot");
+      const sel = document.getElementById("cfg_daily_reboot_hour");
+      if (chk && sel) {
+        sel.disabled = !chk.checked;
+        sel.style.opacity = chk.checked ? "1" : "0.4";
+      }
     }
 
-    function updateMcpBadgeState() {
-      const el = document.getElementById("cfg_mcp_enabled");
-      const badge = document.getElementById("mcp_badge_status");
-      if (!badge) return;
-      if (el && el.checked) {
-        badge.innerHTML = "🟢 运行中 · 17800";
-        badge.style.background = "rgba(16, 185, 129, 0.15)";
-        badge.style.color = "#10b981";
-        badge.style.borderColor = "rgba(16, 185, 129, 0.3)";
-      } else {
-        badge.innerHTML = "⚪ 未启用 (安全隔离)";
-        badge.style.background = "rgba(148, 163, 184, 0.15)";
-        badge.style.color = "#94a3b8";
-        badge.style.borderColor = "rgba(148, 163, 184, 0.3)";
+    function renderMcpConfig(serverPath) {
+      currentMcpServerPath = serverPath || "<path/to/tools/mcp_server/server.py>";
+      const cfg = {
+        mcpServers: {
+          "air780-cellular": {
+            command: "python",
+            args: [currentMcpServerPath]
+          }
+        }
+      };
+      const box = document.getElementById("mcp_config_box");
+      if (box) box.textContent = JSON.stringify(cfg, null, 2);
+    }
+
+    function copyMcpConfig() {
+      const box = document.getElementById("mcp_config_box");
+      if (box && box.textContent) {
+        copyToClipboard(box.textContent, "已复制 MCP 客户端配置");
       }
+    }
+
+    function copyMcpAgentPrompt() {
+      const p = currentMcpServerPath || "<path/to/tools/mcp_server/server.py>";
+      const promptText = `请帮我在当前工程/客户端配置并启用这个本地 4G 蜂窝通信 MCP 服务：\n- 服务名: air780-cellular\n- 启动命令: python "${p}"\n- 标准配置示例:\n{\n  "mcpServers": {\n    "air780-cellular": {\n      "command": "python",\n      "args": ["${p}"]\n    }\n  }\n}\n请将其写入适合当前环境的 MCP 配置文件（如 .mcp.json、.cursor/mcp.json 或 claude_desktop_config.json）并确认服务就绪。`;
+      copyToClipboard(promptText, "已复制 Agent 安装指令，可直接发送给 AI 助手");
     }
 
     async function saveSystemSettings() {
       const payload = {
+        clear: state.notifyClearFields || {},
         mcp: {
           enabled: document.getElementById("cfg_mcp_enabled") ? document.getElementById("cfg_mcp_enabled").checked : false,
           port: 17800
         },
         system: {
-          auto_copy_otp: document.getElementById("cfg_auto_copy_otp") ? (document.getElementById("cfg_auto_copy_otp").checked ? 1 : 0) : 1,
-          store_on_board: document.getElementById("cfg_store_on_board") ? (document.getElementById("cfg_store_on_board").checked ? 1 : 0) : 1,
-          daily_reboot: document.getElementById("cfg_daily_reboot") ? (document.getElementById("cfg_daily_reboot").checked ? 1 : 0) : 1
+          autostart: document.getElementById("cfg_autostart") ? document.getElementById("cfg_autostart").checked : false,
+          auto_copy_otp: document.getElementById("cfg_auto_copy_otp") ? document.getElementById("cfg_auto_copy_otp").checked : true,
+          desktop_notification: document.getElementById("cfg_desktop_notification") ? document.getElementById("cfg_desktop_notification").checked : true,
+          privacy_mode: document.getElementById("cfg_privacy_mode") ? document.getElementById("cfg_privacy_mode").checked : false,
+          play_sound: document.getElementById("cfg_play_sound") ? document.getElementById("cfg_play_sound").checked : true,
+          store_on_board: document.getElementById("cfg_store_on_board") ? document.getElementById("cfg_store_on_board").checked : false,
+          daily_reboot: document.getElementById("cfg_daily_reboot") ? document.getElementById("cfg_daily_reboot").checked : false,
+          daily_reboot_hour: parseInt(document.getElementById("cfg_daily_reboot_hour") ? document.getElementById("cfg_daily_reboot_hour").value : "4", 10),
+          lan_access: document.getElementById("cfg_lan_access") ? document.getElementById("cfg_lan_access").checked : false
         },
         feishu: {
           enable: document.getElementById("cfg_feishu_enable") ? (document.getElementById("cfg_feishu_enable").checked ? 1 : 0) : 0,
@@ -4871,17 +5505,33 @@
         }
       };
 
-      closeSettingsDrawer();
-
       if (state.isLive) {
+        // 先增量持久化系统偏好
+        try {
+          await apiFetch("/api/system/settings", "POST", payload.system);
+        } catch (e) {}
+
         const res = await apiFetch("/api/config/notify", "POST", payload);
         if (res && res.ok) {
-          showToast("💾 配置已成功保存并实时生效！", "success");
+          await loadConfigDrawerData();
+          if (res.active) {
+            closeSettingsDrawer();
+            const boardStates = Object.values(res.board_sync || {});
+            if (!res.board_sync_known || boardStates.includes(false)) {
+              showToast("配置已保存，后台已加载；部分板端同步尚未确认。", "info");
+            } else if (boardStates.length === 0) {
+              showToast("配置已保存，后台已加载；当前没有在线板卡可同步。", "info");
+            } else {
+              showToast("配置与系统偏好已保存生效。", "success");
+            }
+          } else {
+            showToast("配置已保存，但后台加载未确认；暂不能认为推送已生效。", "info");
+          }
         } else {
           showToast("保存失败: " + ((res && res.error) || "未知错误"), "danger");
         }
       } else {
-        showToast("💾 配置已成功保存", "success");
+        showToast("当前未连接服务，配置没有保存。", "danger");
       }
     }
 
@@ -4897,29 +5547,20 @@
       showToast(`正在向【${name}】发送测试心跳卡片...`, 'info');
 
       if (state.isLive) {
-        let channelCfg = {};
-        if (channel === 'feishu') {
-          channelCfg = { url: document.getElementById("cfg_feishu_url").value.trim(), secret: document.getElementById("cfg_feishu_secret").value.trim() };
-        } else if (channel === 'dingtalk') {
-          channelCfg = { url: document.getElementById("cfg_dingtalk_url").value.trim(), secret: document.getElementById("cfg_dingtalk_secret").value.trim() };
-        } else if (channel === 'wecom') {
-          channelCfg = { url: document.getElementById("cfg_wecom_url").value.trim() };
-        } else if (channel === 'bark') {
-          channelCfg = { url: document.getElementById("cfg_bark_url").value.trim(), group: document.getElementById("cfg_bark_group").value.trim(), sound: document.getElementById("cfg_bark_sound").value.trim() };
-        } else if (channel === 'webhook') {
-          channelCfg = { url: document.getElementById("cfg_webhook_url").value.trim() };
+        if (!state.notifySavedDraftSnapshot || notifyFormSnapshot() !== state.notifySavedDraftSnapshot) {
+          showToast("请先保存【" + name + "】的修改，再发送测试。", "info");
+          return;
         }
-
-        const res = await apiFetch("/api/config/notify/test", "POST", { channel, config: channelCfg });
+        const res = await apiFetch("/api/config/notify/test", "POST", { channel });
         if (res && res.ok) {
-          showToast(`✅ 【${name}】测试消息发送成功！`, "success");
+          showToast(res.state === "http_accepted"
+            ? "【" + name + "】HTTP 请求已接收，业务处理结果未知。"
+            : "【" + name + "】本次请求已被渠道接受；后台自然推送仍需单独验证。", "success");
         } else {
           showToast(`❌ 测试失败: ${(res && res.error) || "无法连接到该渠道接口"}`, "danger");
         }
       } else {
-        setTimeout(() => {
-          showToast(`✅ 【${name}】测试消息发送成功！(200 OK)`, 'success');
-        }, 700);
+        showToast("当前未连接服务，无法发送测试。", "danger");
       }
     }
 
@@ -5021,7 +5662,7 @@
         showToast(`❌ 模组离线，无法控制【${info.name}】随身上网`, "danger");
         return;
       }
-      showToast(enabled ? `正在为【${info.name}】开启 4G 随身上网 (USB 网卡)...` : `已关闭【${info.name}】4G 随身上网 (防流量偷跑)`, "info");
+      showToast(enabled ? `正在为【${info.name}】开启 4G 随身上网 (USB 网卡)...` : `已关闭【${info.name}】4G 随身上网`, "info");
       const res = await apiFetch("/api/control/rndis", "POST", { slot: slotId, enable: enabled });
       if (!res || !res.ok) {
         if (switchEl) switchEl.checked = !enabled;
@@ -5040,13 +5681,13 @@
         showToast(`❌ 模组离线，无法控制【${info.name}】蜂窝数据`, "danger");
         return;
       }
-      showToast(enabled ? `正在为【${info.name}】开启蜂窝数据...` : `正在掐断【${info.name}】蜂窝数据 (0 流量保号)...`, "info");
+      showToast(enabled ? `正在开启【${info.name}】移动数据...` : `正在关闭【${info.name}】移动数据...`, "info");
       const res = await apiFetch("/api/control/data", "POST", { slot: slotId, enable: enabled });
       if (!res || !res.ok) {
         if (switchEl) switchEl.checked = !enabled;
         showToast(`❌ 设置蜂窝数据失败: ${(res && res.error) || '通信超时'}`, "danger");
       } else {
-        showToast(enabled ? `已开启【${info.name}】蜂窝数据联网` : `已掐断【${info.name}】蜂窝数据 (0 流量纯信令保号)`, "success");
+        showToast(enabled ? `已开启【${info.name}】移动数据` : `已关闭【${info.name}】移动数据`, "success");
       }
     }
 
@@ -5081,23 +5722,24 @@
       }
     }
 
-    function switchToFlashModal() {
-      const slotId = state.currentTargetSlot || 'slot_1';
-      closeModal('modalFota');
-      openFlashModal(slotId);
-    }
+    let fotaCheckSeq = 0;
+    let fotaLastCheckResult = null;
 
     async function openFotaModal(slotId) {
       state.currentTargetSlot = slotId;
-      const info = slotDataMap[slotId] || slotDataMap['slot_1'] || {};
+      const currentSeq = ++fotaCheckSeq;
+      fotaLastCheckResult = null;
+
+      const info = (slotDataMap && slotDataMap[slotId]) || {};
       const badge = document.getElementById("fotaSlotBadge");
       const model = document.getElementById("fotaModelName");
       const curVer = document.getElementById("fotaCurrentVer");
       const tarVer = document.getElementById("fotaTargetVer");
       const methodEl = document.getElementById("fotaMethod");
+      const chgLogSection = document.getElementById("fotaChangelogSection");
       const chgLog = document.getElementById("fotaChangelogBox");
       const btn = document.getElementById("btnStartFota");
-      const btnGoFlash = document.getElementById("btnGoFlashtool");
+      const btnRecheck = document.getElementById("btnRecheckFota");
       const warnBox = document.getElementById("fotaWarningBox");
       const warnText = document.getElementById("fotaWarningText");
       const prog = document.getElementById("fotaProgressSection");
@@ -5109,6 +5751,17 @@
 
       if (badge) badge.textContent = getSlotModalTitle(slotId);
       if (model) model.textContent = `合宙 ${info.model || 'Air780'} (${info.port || ''})`;
+      if (curVer) curVer.textContent = info.version ? (info.version.startsWith("v") ? info.version : `v${info.version}`) : "--";
+      if (tarVer) {
+        tarVer.textContent = "正在检查随附更新包 (离线)...";
+        tarVer.style.color = "#94a3b8";
+      }
+      if (methodEl) {
+        methodEl.textContent = "正在检查上位机随附更新包...";
+        methodEl.style.color = "#38bdf8";
+      }
+      if (chgLogSection) chgLogSection.style.display = "none";
+      if (chgLog) chgLog.textContent = "";
       if (prog) prog.style.display = "none";
       if (warnBox) warnBox.style.display = "none";
       if (bar) {
@@ -5120,60 +5773,107 @@
         status.style.color = "#38bdf8";
         status.textContent = "准备就绪";
       }
-      if (btn) {
-        btn.disabled = false;
-        btn.style.display = "inline-flex";
-        btn.innerHTML = "🚀 立即在线升级 (约3秒)";
-      }
-      if (btnGoFlash) btnGoFlash.style.display = "none";
+      if (btn) btn.style.display = "none";
+      if (btnRecheck) btnRecheck.style.display = "none";
 
       openModal("modalFota");
 
       // 异步拉取真实版本元数据与更新日志 (SSOT)
       try {
         const res = await apiFetch(`/api/control/upgrade_info?slot=${slotId}`);
+        // 丢弃晚到或已切换槽位的旧响应
+        if (currentSeq !== fotaCheckSeq || state.currentTargetSlot !== slotId) {
+          return;
+        }
+
         if (res && res.ok) {
-          if (curVer) curVer.textContent = res.current_version.startsWith("v") ? res.current_version : `v${res.current_version}`;
-          if (tarVer) {
-            if (res.has_update) {
-              tarVer.textContent = `v${res.target_version} (新版本已就绪 · ${res.size_kb} KB)`;
-              tarVer.style.color = "var(--accent-green)";
-            } else {
-              tarVer.textContent = `v${res.target_version} (已是最新版本)`;
-              tarVer.style.color = "#94a3b8";
-            }
+          fotaLastCheckResult = res;
+
+          if (curVer) {
+            const rawVer = res.current_version;
+            curVer.textContent = rawVer ? (rawVer.startsWith("v") ? rawVer : `v${rawVer}`) : "未知";
           }
-          if (methodEl && res.upgrade_method) {
-            methodEl.textContent = res.upgrade_method;
-          }
-          if (chgLog && res.changelog) {
-            chgLog.innerHTML = res.changelog.replace(/；/g, "<br>• ").replace(/^/g, "• ");
+          if (model && res.model) {
+            model.textContent = `合宙 ${res.model} (${info.port || ''})`;
           }
 
-          if (res.sota_supported === false) {
-            if (warnBox && warnText) {
-              warnBox.style.display = "block";
-              warnText.textContent = res.tip || "当前模组需通过重新刷机控制台烧录专属镜像。";
+          const checkState = res.check_state;
+          const reason = res.reason || "";
+          const hasValidPkg = Boolean(res.package_version && res.package_id);
+
+          // 随附更新包行展示（无有效包时不虚构版本，不称全网最新）
+          if (tarVer) {
+            if (hasValidPkg) {
+              const sizeInfo = res.size_kb ? ` (${res.size_kb} KB)` : "";
+              tarVer.textContent = `v${res.package_version}${sizeInfo}`;
+            } else {
+              tarVer.textContent = "无有效随附更新包";
             }
-            if (btn) btn.style.display = "none";
-            if (btnGoFlash) {
-              btnGoFlash.style.display = "inline-flex";
-              btnGoFlash.innerHTML = res.has_update ? "🛠️ 打开重新刷机控制台 (线刷升级)" : "🛠️ 打开重新刷机控制台";
+          }
+
+          if (methodEl) {
+            methodEl.textContent = reason;
+          }
+
+          // 更新日志呈现：textContent 安全呈现保留换行，无有效包或校验失败时不展示旧说明
+          if (hasValidPkg && res.changelog) {
+            if (chgLog) {
+              chgLog.textContent = res.changelog.replace(/；/g, "\n• ").replace(/^/g, "• ");
             }
+            if (chgLogSection) chgLogSection.style.display = "block";
           } else {
-            if (warnBox) warnBox.style.display = "none";
+            if (chgLogSection) chgLogSection.style.display = "none";
+            if (chgLog) chgLog.textContent = "";
+          }
+
+          // 状态分支样式与按钮控制 (无本次真实物理身份或包 ID 绝不出安装按钮)
+          if (checkState === "available" && res.can_install && res.device_id && res.package_id) {
+            if (tarVer) tarVer.style.color = "var(--accent-green)";
+            if (methodEl) methodEl.style.color = "var(--accent-green)";
             if (btn) {
               btn.style.display = "inline-flex";
-              if (!res.has_update) {
-                btn.innerHTML = "当前已是最新固件 (点击可重刷验证)";
-              } else {
-                btn.innerHTML = "🚀 立即在线升级 (约3秒)";
-              }
+              btn.innerHTML = "🚀 安装更新";
             }
-            if (btnGoFlash) btnGoFlash.style.display = "none";
+          } else if (checkState === "device_newer" || checkState === "equal") {
+            if (tarVer) tarVer.style.color = "#94a3b8";
+            if (methodEl) methodEl.style.color = "#94a3b8";
+            if (btn) btn.style.display = "none";
+          } else if (checkState === "host_not_ready") {
+            if (tarVer) tarVer.style.color = "#fbbf24";
+            if (methodEl) methodEl.style.color = "#fbbf24";
+            if (btn) btn.style.display = "none";
+          } else if (checkState === "no_package" || checkState === "invalid_package" || checkState === "unknown_device" || checkState === "error") {
+            if (tarVer) tarVer.style.color = "#ef4444";
+            if (methodEl) methodEl.style.color = "#ef4444";
+            if (btn) btn.style.display = "none";
+            if (btnRecheck) btnRecheck.style.display = "inline-flex";
+          } else {
+            // incompatible / unsupported / busy
+            if (tarVer) tarVer.style.color = "#fbbf24";
+            if (methodEl) methodEl.style.color = "#fbbf24";
+            if (btn) btn.style.display = "none";
           }
+        } else {
+          if (methodEl) {
+            methodEl.textContent = (res && res.error) || "检查随附更新包失败";
+            methodEl.style.color = "#ef4444";
+          }
+          if (tarVer) tarVer.textContent = "--";
+          if (chgLogSection) chgLogSection.style.display = "none";
+          if (btn) btn.style.display = "none";
+          if (btnRecheck) btnRecheck.style.display = "inline-flex";
         }
-      } catch (e) {}
+      } catch (e) {
+        if (currentSeq !== fotaCheckSeq || state.currentTargetSlot !== slotId) return;
+        if (methodEl) {
+          methodEl.textContent = "网络通信超时或网关未响应";
+          methodEl.style.color = "#ef4444";
+        }
+        if (tarVer) tarVer.textContent = "--";
+        if (chgLogSection) chgLogSection.style.display = "none";
+        if (btn) btn.style.display = "none";
+        if (btnRecheck) btnRecheck.style.display = "inline-flex";
+      }
     }
 
     async function executeFotaUpgrade() {
@@ -5183,6 +5883,11 @@
       const bar = document.getElementById("fotaProgressBar");
       const pct = document.getElementById("fotaPercentText");
       const status = document.getElementById("fotaStatusText");
+
+      if (!fotaLastCheckResult || !fotaLastCheckResult.can_install) {
+        showToast("当前状态不允许安装更新", "warning");
+        return;
+      }
 
       if (btn) { btn.disabled = true; btn.innerHTML = "⏳ 正在平滑更新..."; }
       if (prog) prog.style.display = "block";
@@ -5199,15 +5904,20 @@
       resetFotaWatchdog();
 
       try {
+        const payload = {
+          slot: slotId,
+          expected_device_id: fotaLastCheckResult.device_id,
+          package_id: fotaLastCheckResult.package_id
+        };
         const res = await apiFetch(`/api/control/upgrade_script?slot=${slotId}`, {
           method: "POST",
-          body: JSON.stringify({ slot: slotId })
+          body: JSON.stringify(payload)
         });
         if (!res || !res.ok) {
           clearFotaWatchdog();
-          if (btn) { btn.disabled = false; btn.innerHTML = "🚀 重试在线升级"; }
+          if (btn) { btn.disabled = false; btn.innerHTML = "🚀 安装更新"; }
           if (bar) bar.style.backgroundColor = "var(--accent-red, #ef4444)";
-          const errMsg = (res && res.error) || "升级启动失败";
+          const errMsg = (res && (res.reason || res.error)) || "升级启动失败";
           if (status) {
             status.style.color = "var(--accent-red, #ef4444)";
             status.textContent = errMsg;
@@ -5218,7 +5928,7 @@
         // 后台已启动，等待 SSE flash_progress 实时推流推送进度
       } catch (err) {
         clearFotaWatchdog();
-        if (btn) { btn.disabled = false; btn.innerHTML = "🚀 重试在线升级"; }
+        if (btn) { btn.disabled = false; btn.innerHTML = "🚀 安装更新"; }
         if (bar) bar.style.backgroundColor = "var(--accent-red, #ef4444)";
         if (status) {
           status.style.color = "var(--accent-red, #ef4444)";
@@ -5231,8 +5941,25 @@
     // =========================================================
     // 14. 重新刷机与修复控制台
     // =========================================================
-    // AIR-35: 移芯通用物理线刷与全新模块接入驱动逻辑
+    // AIR-35 / AIR-44: 移芯通用物理线刷与全新模块 3 选 1 防呆开箱向导
     let unassignedDonglesCache = [];
+
+    function selectWizardChip(chip) {
+      const sel = document.getElementById("flashtoolChipSelect");
+      if (sel) sel.value = chip;
+      ['ec718pv', 'ec718pm', 'ec618'].forEach(c => {
+        const el = document.getElementById("wCard_" + c);
+        if (el) {
+          if (c === chip) el.classList.add("active");
+          else el.classList.remove("active");
+        }
+      });
+    }
+
+    function syncWizardFromSelect() {
+      const sel = document.getElementById("flashtoolChipSelect");
+      if (sel) selectWizardChip(sel.value);
+    }
 
     function onFlashtoolModeChange() {
       const mode = document.getElementById("flashtoolModeSelect")?.value || "script";
@@ -5246,29 +5973,54 @@
       state.currentTargetSlot = slotId;
       state.isNewDeviceFlash = false;
       const info = getSafeSlotInfo(slotId);
+
+      const titleEl = document.getElementById("flashModalHeaderTitle");
+      if (titleEl) titleEl.textContent = "🛠️ 固件烧录与修复控制台";
       const targetName = document.getElementById("flashTargetName");
       if (targetName) targetName.textContent = getSlotModalTitle(slotId);
 
-      const m = (info.model || 'Air780').replace(/^合宙\s*/, '').trim().toUpperCase();
-      const bsp = (info.bsp || '').toUpperCase();
-      
-      // 识别芯片架构：EC718PV 或 EC618
-      const isEc618 = m.includes("780E") || m.includes("618") || bsp.includes("618") || m.includes("700E");
-      const chipType = isEc618 ? "ec618" : "ec718pv";
+      const wizardBox = document.getElementById("wizardCardsContainer");
+      if (wizardBox) wizardBox.style.display = "none";
+      const modeDesc = document.getElementById("flashModeDescBox");
+      if (modeDesc) modeDesc.style.display = "block";
+
+      // 现场芯片按需探测 (JIT Detection: 物理芯片寄存器优先 + 全词精准查表)
+      const reportedChip = (info.capabilities?.chip || info.chip || '').toUpperCase();
+      const rawModel = (info.model || info.bsp || 'Air780').replace(/^合宙\s*/, '').trim().toUpperCase();
+
+      let chipType = "ec718pv";
+      let chipSource = "物理芯片寄存器";
+
+      if (reportedChip.includes("718PM")) {
+        chipType = "ec718pm";
+      } else if (reportedChip.includes("618")) {
+        chipType = "ec618";
+      } else if (reportedChip.includes("718PV") || reportedChip.includes("718P")) {
+        chipType = "ec718pv";
+      } else {
+        // 回退至全词精准映射 (EXACT MATCH)
+        chipSource = "板端型号精准查表";
+        if (rawModel === "AIR780EPM" || rawModel.startsWith("AIR780EPM")) chipType = "ec718pm";
+        else if (rawModel === "AIR780E" || rawModel === "AIR780EC" || rawModel === "AIR780EG" || rawModel === "AIR700E") chipType = "ec618";
+        else chipType = "ec718pv";
+      }
+
+      const chipNames = {
+        "ec718pm": "移芯 EC718PM (V2050 稳定底包 · 低功耗架构)",
+        "ec718pv": "移芯 EC718PV (V2001 语音/数传底包 · VoLTE架构)",
+        "ec618": "移芯 EC618 (V1105 经典底包 · 一代成熟架构)"
+      };
+      const chipLabel = chipNames[chipType] || `${chipType.toUpperCase()} 芯片架构`;
 
       const chipSel = document.getElementById("flashtoolChipSelect");
-      if (chipSel) {
-        chipSel.value = chipType;
-      }
+      if (chipSel) chipSel.value = chipType;
 
       const modeSel = document.getElementById("flashtoolModeSelect");
-      if (modeSel) {
-        modeSel.value = "script"; // 正常卡槽重刷默认极速脚本
-      }
+      if (modeSel) modeSel.value = "script"; // 正常卡槽重刷默认极速脚本
 
       const portSel = document.getElementById("flashtoolPortSelect");
       if (portSel && info.port) {
-        portSel.innerHTML = `<option value="${info.port}">${info.port} (${m} 4G通信网关)</option>`;
+        portSel.innerHTML = `<option value="${info.port}">${info.port} (${info.model || 'Air780'} 4G通信网关)</option>`;
       }
 
       const bootBox = document.getElementById("flashBootGuidanceBox");
@@ -5279,9 +6031,10 @@
 
       if (term) {
         term.innerHTML = `
-          <span class="term-line-info">[SYSTEM] 移芯通用物理线刷底座准备就绪 (FlashToolCLI)</span><br>
-          <span class="term-line-info">[SYSTEM] 目标模组: ${getSlotModalTitle(slotId)} (${chipType.toUpperCase()} 架构 · 端口 ${info.port || '自动'})</span><br>
-          <span class="term-line-warn">[提示] 点击“开始烧录”后，上位机将引导芯片切入 Bootloader 并通过 FlashToolCLI 执行安全写入。</span>
+          <span class="term-line-info">[SYSTEM] 移芯通用物理线刷底座就绪 (FlashToolCLI)</span><br>
+          <span class="term-line-info">[物理芯片探测] 目标卡槽 ${slotId} · 现场获取芯片: ${chipType.toUpperCase()} (来源: ${chipSource})</span><br>
+          <span class="term-line-info">[自动装配] 已匹配推荐底层: ${chipLabel} · 端口 ${info.port || '自动探测'}</span><br>
+          <span class="term-line-warn">[安全提示] 芯片线刷采用安全分卷写入，完好保护机身出厂 RF 校准表与 IMEI。</span>
         `;
       }
       if (btn) {
@@ -5296,44 +6049,72 @@
     function openOnboardingWizard() {
       state.isNewDeviceFlash = true;
       state.currentTargetSlot = null;
+
+      const titleEl = document.getElementById("flashModalHeaderTitle");
+      if (titleEl) titleEl.textContent = "🚀 全新模组开箱装机向导";
       const targetName = document.getElementById("flashTargetName");
-      if (targetName) targetName.textContent = "全新模组一键装机";
+      if (targetName) targetName.textContent = "Zero-Tooling";
+
+      const wizardBox = document.getElementById("wizardCardsContainer");
+      if (wizardBox) wizardBox.style.display = "block";
+      const modeDesc = document.getElementById("flashModeDescBox");
+      if (modeDesc) modeDesc.style.display = "none";
 
       const modeSel = document.getElementById("flashtoolModeSelect");
-      if (modeSel) {
-        modeSel.value = "full"; // 全新模组必须全量刷写
-      }
+      if (modeSel) modeSel.value = "full"; // 全新模组必须全量刷写
+
+      let targetChip = "ec718pv";
+      let isRecommended = false;
+
+      // 重置所有卡片的高亮和推荐标记
+      ['ec718pv', 'ec718pm', 'ec618'].forEach(c => {
+        const el = document.getElementById("wCard_" + c);
+        const bd = document.getElementById("wBadge_" + c);
+        if (el) { el.classList.remove("recommended"); el.classList.remove("active"); }
+        if (bd) bd.style.display = "none";
+      });
 
       const portSel = document.getElementById("flashtoolPortSelect");
       if (portSel) {
         if (unassignedDonglesCache && unassignedDonglesCache.length > 0) {
-          portSel.innerHTML = unassignedDonglesCache.map(d => 
+          portSel.innerHTML = unassignedDonglesCache.map(d =>
             `<option value="${d.port}">${d.port} - ${d.model_guess} (${d.mode === 'bootloader' ? 'Bootloader态' : '出厂AT态'})</option>`
           ).join('');
+          const first = unassignedDonglesCache[0];
+          if (first.chip && first.chip !== "unknown") {
+            targetChip = first.chip;
+            isRecommended = true;
+          }
         } else {
           portSel.innerHTML = `<option value="auto">自动捕获 Bootloader 烧录口 (17D1:0001)</option>`;
         }
       }
 
-      const chipSel = document.getElementById("flashtoolChipSelect");
-      if (chipSel && unassignedDonglesCache && unassignedDonglesCache[0]) {
-        const first = unassignedDonglesCache[0];
-        if (first.chip && first.chip !== "unknown") {
-          chipSel.value = first.chip;
-        }
+      if (isRecommended) {
+        const cardEl = document.getElementById("wCard_" + targetChip);
+        const badgeEl = document.getElementById("wBadge_" + targetChip);
+        if (cardEl) cardEl.classList.add("recommended");
+        if (badgeEl) badgeEl.style.display = "block";
+        const hintEl = document.getElementById("wizardRecommendHint");
+        if (hintEl) hintEl.textContent = `⚡ 已根据出厂 AT 自动推荐: ${targetChip.toUpperCase()}`;
+      } else {
+        const hintEl = document.getElementById("wizardRecommendHint");
+        if (hintEl) hintEl.textContent = "";
       }
 
+      selectWizardChip(targetChip);
+
       const bootBox = document.getElementById("flashBootGuidanceBox");
-      if (bootBox) bootBox.style.display = "block";
+      if (bootBox) bootBox.style.display = "none";
 
       const term = document.getElementById("flashtoolConsole");
       const btn = document.getElementById("btnStartFlash");
 
       if (term) {
         term.innerHTML = `
-          <span class="term-line-info">[向导] 欢迎使用 Air780 全新模组开箱接入向导 (Zero-Tooling Onboarding)</span><br>
-          <span class="term-line-info">[向导] 即将全量刷入 LuatOS 内核底座 + 智能网关业务脚本 + 射频校准参数</span><br>
-          <span class="term-line-warn">[提示] 请确保 USB 连接稳定，点击“开始全量刷入”后约 10 秒即可自动完成系统固化！</span>
+          <span class="term-line-info">[向导] 欢迎使用合宙 Air780 全新模组开箱接入向导 (Zero-Tooling Onboarding)</span><br>
+          <span class="term-line-info">[向导] 即将全量刷入 LuatOS 官方稳定内核底座 + 智能网关业务脚本 (安全保留出厂校准表)</span><br>
+          <span class="term-line-warn">[提示] 请核对硬件芯片型号后点击“开始全量刷入”，约 10 秒自动完成固化并接入网络！</span>
         `;
       }
       if (btn) {
@@ -5351,7 +6132,7 @@
       const bootBox = document.getElementById("flashBootGuidanceBox");
       const slotId = state.isNewDeviceFlash ? null : (state.currentTargetSlot || 'slot_1');
       const info = slotId ? getSafeSlotInfo(slotId) : {};
-      
+
       const mode = document.getElementById("flashtoolModeSelect")?.value || "script";
       const chip = document.getElementById("flashtoolChipSelect")?.value || "ec718pv";
       const selectedPort = document.getElementById("flashtoolPortSelect")?.value;
@@ -5380,7 +6161,8 @@
         port: targetPort,
         chip: chip,
         mode: mode,
-        hardware_model: info.model || null
+        hardware_model: info.model || null,
+        is_unassigned: state.isNewDeviceFlash
       };
 
       const res = await apiFetch("/api/control/flash", "POST", payload);
@@ -5390,14 +6172,14 @@
         }
         if (btn) {
           btn.disabled = false;
-          btn.innerHTML = mode === 'full' ? "🚀 开始全量刷入" : "⚡ 开始极速更新";
+          btn.innerHTML = mode === 'full' ? "🚀 重试全量刷入" : "⚡ 开始极速更新";
         }
         if (bootBox) bootBox.style.display = "block";
         showToast(`❌ 启动刷机失败: ${(res && res.error) || '通信超时'}`, "danger");
       }
     }
 
-    // 轮询检查未分配模组 (AIR-35)
+    // 轮询检查未分配模组 (AIR-35 / AIR-44)
     async function checkUnassignedDongles() {
       try {
         const res = await apiFetch("/api/flasher/unassigned");
@@ -5408,7 +6190,11 @@
           if (banner && textEl) {
             if (unassignedDonglesCache.length > 0) {
               const first = unassignedDonglesCache[0];
-              textEl.textContent = `发现 ${unassignedDonglesCache.length} 块全新模组: ${first.model_guess} (${first.port})`;
+              if (first.mode === 'bootloader') {
+                textEl.textContent = `⚡ 发现 1 块全新/刷机态模组 (${first.port})，点击进行系统安装`;
+              } else {
+                textEl.textContent = `⚡ 发现全新 ${first.model_guess} (${first.port})，点击一键开箱安装`;
+              }
               banner.style.display = "flex";
             } else {
               banner.style.display = "none";
@@ -5418,6 +6204,7 @@
       } catch (e) {}
     }
     setInterval(checkUnassignedDongles, 3000);
+    setInterval(renderTopOtpFreshness, 30000);
 
     // 15. 排序、检索过滤与扫描
     // =========================================================
@@ -5534,6 +6321,10 @@
             showToast(`📩 收到新短信: 来自 ${sms.phone || sms.sender}`, "success");
             const otp = sms.otp || extractOtpClient(sms.content);
             if (otp) {
+              const soundOn = document.getElementById("cfg_play_sound") ? document.getElementById("cfg_play_sound").checked : true;
+              if (soundOn) {
+                playOtpSound();
+              }
               const autoCopy = document.getElementById("cfg_auto_copy_otp") ? document.getElementById("cfg_auto_copy_otp").checked : true;
               if (autoCopy) {
                 copyToClipboard(otp, `🔑 验证码已极速复制: ${otp}`);
@@ -5572,11 +6363,11 @@
                 closeModal("modalDialCall");
 
                 if (status === "ANSWERED_AND_ENDED") {
-                  showToast("📞 对方已接听！防扣费机制已立即秒挂断（双方 0 话费）", "success");
+                  showToast("📞 对方已接听，已按预设挂断", "success");
                 } else if (status === "DISCONNECTED") {
                   showToast("📞 对方已挂断/拒接，通话已结束", "info");
                 } else if (status === "TIMEOUT_HANGUP") {
-                  showToast("📞 呼叫超时未接听，已自动安全挂断（双方 0 话费）", "info");
+                  showToast("📞 呼叫超时未接听，已自动挂断", "info");
                 } else if (status === "DIAL_FAILED") {
                   showToast("⚠️ 拨号失败: " + (data.error || "网络或硬件拒绝"), "danger");
                 } else if (status === "MANUAL_HANGUP") {
@@ -5743,6 +6534,247 @@
     }
 
     // =========================================================
+    // 16.1 原生 Web Audio 纯代码合成清脆提示音 (AIR-57)
+    // =========================================================
+    function playOtpSound() {
+      try {
+        const AudioCtx = window.AudioContext || window.webkitAudioContext;
+        if (!AudioCtx) return;
+        const ctx = new AudioCtx();
+        const now = ctx.currentTime;
+
+        const osc1 = ctx.createOscillator();
+        const gain1 = ctx.createGain();
+        osc1.type = 'sine';
+        osc1.frequency.setValueAtTime(587.33, now); // D5
+        gain1.gain.setValueAtTime(0.12, now);
+        gain1.gain.exponentialRampToValueAtTime(0.001, now + 0.12);
+        osc1.connect(gain1);
+        gain1.connect(ctx.destination);
+        osc1.start(now);
+        osc1.stop(now + 0.12);
+
+        const osc2 = ctx.createOscillator();
+        const gain2 = ctx.createGain();
+        osc2.type = 'sine';
+        osc2.frequency.setValueAtTime(880.00, now + 0.08); // A5
+        gain2.gain.setValueAtTime(0.15, now + 0.08);
+        gain2.gain.exponentialRampToValueAtTime(0.001, now + 0.28);
+        osc2.connect(gain2);
+        gain2.connect(ctx.destination);
+        osc2.start(now + 0.08);
+        osc2.stop(now + 0.28);
+
+        // 播放完毕后主动释放 AudioContext，防止累计实例达到浏览器上限
+        setTimeout(() => {
+          try {
+            if (ctx.state !== 'closed') ctx.close();
+          } catch (e) {}
+        }, 400);
+      } catch (e) {}
+    }
+
+    // =========================================================
+    // 16.2 局域网访问与跨设备协作状态渲染与复制 (AIR-57 / AIR-62)
+    // =========================================================
+    function updateLanAccessUiState() {
+      const elChk = document.getElementById("cfg_lan_access");
+      const isEnabled = elChk ? elChk.checked : false;
+      const elBadge = document.getElementById("lan_access_status_badge");
+      const elUrlText = document.getElementById("lan_guide_url_text");
+      const elCopyBtn = document.getElementById("lan_copy_url_btn");
+      const elTip = document.getElementById("lan_guide_tip_text");
+      const elCard = document.getElementById("lan_access_card_box");
+      const rawUrl = state.currentLanUrlRaw || "http://127.0.0.1:17801";
+
+      if (isEnabled) {
+        if (elBadge) {
+          elBadge.textContent = "🟢 局域网已就绪";
+          elBadge.style.background = "rgba(34, 197, 94, 0.15)";
+          elBadge.style.color = "#4ade80";
+          elBadge.style.border = "1px solid rgba(34, 197, 94, 0.3)";
+        }
+        if (elUrlText) {
+          elUrlText.textContent = rawUrl;
+          elUrlText.style.color = "#38bdf8";
+        }
+        if (elCopyBtn) {
+          elCopyBtn.disabled = false;
+          elCopyBtn.style.opacity = "1";
+          elCopyBtn.style.cursor = "pointer";
+        }
+        if (elTip) {
+          elTip.textContent = "提示：只要手机或平板与电脑处于同一个 Wi-Fi 或路由器局域网，在手机浏览器直接输入上方地址即可远程收发短信与管理板卡。";
+        }
+        if (elCard) {
+          elCard.style.borderColor = "rgba(56, 189, 248, 0.25)";
+        }
+        state.currentLanUrl = rawUrl;
+      } else {
+        if (elBadge) {
+          elBadge.textContent = "⚪ 仅本机访问 (安全隔离)";
+          elBadge.style.background = "rgba(148, 163, 184, 0.15)";
+          elBadge.style.color = "#94a3b8";
+          elBadge.style.border = "1px solid rgba(148, 163, 184, 0.3)";
+        }
+        if (elUrlText) {
+          elUrlText.textContent = rawUrl + " (已关闭 · 仅本机安全可用)";
+          elUrlText.style.color = "#64748b";
+        }
+        if (elCopyBtn) {
+          elCopyBtn.disabled = true;
+          elCopyBtn.style.opacity = "0.4";
+          elCopyBtn.style.cursor = "not-allowed";
+        }
+        if (elTip) {
+          elTip.textContent = "提示：当前已关闭局域网访问，有效防止同一 Wi-Fi 下的其他人偷窥短信与验证码。如需使用手机查看，请开启上方开关。";
+        }
+        if (elCard) {
+          elCard.style.borderColor = "var(--border-color)";
+        }
+        state.currentLanUrl = "";
+      }
+    }
+
+    function copyLanUrl() {
+      const elChk = document.getElementById("cfg_lan_access");
+      if (elChk && !elChk.checked) {
+        showToast("局域网跨设备访问当前已关闭，无法复制地址", "info");
+        return;
+      }
+      const url = state.currentLanUrl || (document.getElementById("lan_guide_url_text") ? document.getElementById("lan_guide_url_text").textContent.trim() : "");
+      if (url) {
+        copyToClipboard(url, "局域网访问地址已复制");
+      }
+    }
+
+    async function openSystemFolder(target) {
+      if (!state.isLive) {
+        showToast("服务未连接，无法打开系统目录", "info");
+        return;
+      }
+      try {
+        const res = await apiFetch("/api/system/open_folder", "POST", { target });
+        if (res && res.ok) {
+          showToast(`已在 Windows 资源管理器中打开 ${target === 'logs' ? '运行日志' : '数据'} 目录`, "success");
+        } else {
+          showToast(`打开失败: ${(res && res.error) || '未知异常'}`, "danger");
+        }
+      } catch (err) {
+        showToast(`打开目录失败: ${err.message}`, "danger");
+      }
+    }
+
+    async function clearSystemLogs() {
+      if (!confirm("确定要一键清空上位机运行日志吗？\n该操作仅清空日志文本，不会影响任何历史短信或硬件通信。")) {
+        return;
+      }
+      try {
+        const res = await apiFetch("/api/system/clear_logs", "POST");
+        if (res && res.ok) {
+          const el = document.getElementById("settings_log_size_display");
+          if (el) el.textContent = "0 KB";
+          showToast("运行日志已成功清空", "success");
+        } else {
+          showToast(`清空失败: ${(res && res.error) || '未知错误'}`, "danger");
+        }
+      } catch (err) {
+        showToast(`清空日志异常: ${err.message}`, "danger");
+      }
+    }
+
+    let _lastCheckUpdateTs = 0;
+    async function checkGitHubUpdate() {
+      const now = Date.now();
+      if (now - _lastCheckUpdateTs < 30000) {
+        const waitSec = Math.ceil((30000 - (now - _lastCheckUpdateTs)) / 1000);
+        showToast(`检查更新频率过快，请在 ${waitSec} 秒后再试`, "info");
+        return;
+      }
+      _lastCheckUpdateTs = now;
+
+      const btn = document.getElementById("btn_check_update");
+      const box = document.getElementById("about_update_result_box");
+      if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = "<span>🔄</span><span>正在检查…</span>";
+      }
+      if (box) {
+        box.style.display = "block";
+        box.style.background = "rgba(56, 189, 248, 0.1)";
+        box.style.border = "1px solid rgba(56, 189, 248, 0.25)";
+        box.style.color = "#38bdf8";
+        box.textContent = "正在直连 GitHub 官方 Releases 仓库查询最新发布版本…";
+      }
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+      try {
+        const resp = await fetch("https://api.github.com/repos/ocean1798/Air780EPV-Smart-Gateway/releases/latest", {
+          signal: controller.signal,
+          headers: { "Accept": "application/vnd.github.v3+json" }
+        });
+        clearTimeout(timeoutId);
+
+        if (resp.status === 403 || resp.status === 429) {
+          throw new Error("GitHub API 限频，请稍后再试或前往 Releases 页面查看");
+        }
+        if (!resp.ok) {
+          throw new Error(`GitHub 响应异常 (HTTP ${resp.status})`);
+        }
+
+        const data = await resp.json();
+        const latestTag = (data.tag_name || "").replace(/^v/, "").trim();
+        const currentVer = (state.appCurrentVersion || "1.3.0").replace(/^v/, "").trim();
+
+        // 语义化版本号数字比对 (SemVer Comparison)
+        function compareSemver(v1, v2) {
+          const p1 = (v1 || "").split('.').map(n => parseInt(n, 10) || 0);
+          const p2 = (v2 || "").split('.').map(n => parseInt(n, 10) || 0);
+          for (let i = 0; i < Math.max(p1.length, p2.length); i++) {
+            const num1 = p1[i] || 0;
+            const num2 = p2[i] || 0;
+            if (num1 > num2) return 1;
+            if (num1 < num2) return -1;
+          }
+          return 0;
+        }
+
+        const isNewer = compareSemver(latestTag, currentVer) > 0;
+
+        if (box) {
+          if (latestTag && isNewer) {
+            box.style.background = "rgba(16, 185, 129, 0.12)";
+            box.style.border = "1px solid rgba(16, 185, 129, 0.3)";
+            box.style.color = "#10b981";
+            box.innerHTML = `🎉 发现新版本 <strong>v${escapeHtml(latestTag)}</strong> (当前 v${escapeHtml(currentVer)})！<br>` +
+              `<a href="${escapeHtml(data.html_url || 'https://github.com/ocean1798/Air780EPV-Smart-Gateway/releases')}" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:underline;display:inline-block;margin-top:0.25rem;">点击前往 GitHub Releases 官方下载更新</a>`;
+          } else {
+            box.style.background = "rgba(148, 163, 184, 0.1)";
+            box.style.border = "1px solid rgba(148, 163, 184, 0.25)";
+            box.style.color = "#cbd5e1";
+            box.textContent = `✨ 当前已是最新版本 (v${currentVer})，无须更新。`;
+          }
+        }
+      } catch (err) {
+        clearTimeout(timeoutId);
+        if (box) {
+          box.style.background = "rgba(245, 158, 11, 0.12)";
+          box.style.border = "1px solid rgba(245, 158, 11, 0.3)";
+          box.style.color = "#fbbf24";
+          box.innerHTML = `⚠️ 检查更新暂不可用 (${escapeHtml(err.message || '网络连接超时')})。<br>` +
+            `<a href="https://github.com/ocean1798/Air780EPV-Smart-Gateway/releases" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:underline;display:inline-block;margin-top:0.25rem;">点此手动前往 Releases 页面查看</a>`;
+        }
+      } finally {
+        if (btn) {
+          btn.disabled = false;
+          btn.innerHTML = "<span>🔄</span><span>检查更新</span>";
+        }
+      }
+    }
+
+    // =========================================================
     // 17. 页面启动初始化
     // =========================================================
     window.addEventListener("DOMContentLoaded", async () => {
@@ -5755,6 +6787,15 @@
         fetchCallsHistory();
         setupEventSource();
         scheduleNextHeartbeat();
+
+        // 支持 URL hash 锚点自动打开关于抽屉 (例如 /#about)
+        if (window.location.hash === "#about") {
+          openSettingsDrawer();
+          setTimeout(() => {
+            const el = document.getElementById("about_section_anchor");
+            if (el) el.scrollIntoView({ behavior: "smooth" });
+          }, 400);
+        }
         return;
       } catch (err) {}
 

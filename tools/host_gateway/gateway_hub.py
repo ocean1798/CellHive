@@ -31,7 +31,14 @@ import urllib.error
 from typing import List, Dict, Any, Optional, Tuple
 
 from cluster_health import ClusterHealthMonitor, HealthState
-from cluster_router import ClusterRouter, RouteStrategy, detect_sim_carrier
+from cluster_router import ClusterRouter, RouteStrategy, detect_sim_carrier, detect_phone_carrier, clean_phone_number
+
+CARRIER_NAME_MAP = {
+    "cucc": ("中国联通", "联通"),
+    "cmcc": ("中国移动", "移动"),
+    "ctcc": ("中国电信", "电信"),
+    "cbn":  ("中国广电", "广电"),
+}
 
 HUB_HOST = "127.0.0.1"
 HUB_PORT = 17800
@@ -204,16 +211,35 @@ def get_windows_clipboard() -> Optional[str]:
         return None
 
 
-def show_windows_toast(title: str, message: str):
+def _escape_powershell_str(val: str) -> str:
+    if not val:
+        return ""
+    # 转义单引号为双单引号，剔除反引号、换行与控制空字符，强制截断至 100 字符以内
+    cleaned = str(val).replace("'", "''").replace("`", "").replace("\x00", "").replace("\r", " ").replace("\n", " ").strip()
+    if len(cleaned) > 100:
+        cleaned = cleaned[:100]
+        # 防护：若截断恰好劈开了一对双单引号导致末尾为单引号，修剪末尾确保单引号绝对成对闭合
+        quote_count = cleaned.count("'")
+        if quote_count % 2 != 0:
+            cleaned = cleaned.rstrip("'")
+    return cleaned
+
+
+def show_windows_toast(title: str, message: str, privacy: bool = False):
     """通过 PowerShell 异步向 Windows 屏幕右下角弹出一个原生系统 Toast 通知"""
     if sys.platform != "win32":
         return
+    if privacy:
+        title = "📩 数字蜂巢收到新短信"
+        message = "收到一条新短信（已开启防偷窥保护，点击进入控制台查看）"
+    safe_title = _escape_powershell_str(title)
+    safe_message = _escape_powershell_str(message)
     ps_cmd = f"""
 [Windows.UI.Notifications.ToastNotificationManager, Windows.UI.Notifications, ContentType = WindowsRuntime] | Out-Null
 $template = [Windows.UI.Notifications.ToastNotificationManager]::GetTemplateContent([Windows.UI.Notifications.ToastTemplateType]::ToastText02)
 $toastXml = [xml]$template.GetXml()
-$toastXml.GetElementsByTagName('text')[0].AppendChild($toastXml.CreateTextNode('{title}')) | Out-Null
-$toastXml.GetElementsByTagName('text')[1].AppendChild($toastXml.CreateTextNode('{message}')) | Out-Null
+$toastXml.GetElementsByTagName('text')[0].AppendChild($toastXml.CreateTextNode('{safe_title}')) | Out-Null
+$toastXml.GetElementsByTagName('text')[1].AppendChild($toastXml.CreateTextNode('{safe_message}')) | Out-Null
 $toast = [Windows.UI.Notifications.ToastNotification]::new($toastXml)
 [Windows.UI.Notifications.ToastNotificationManager]::CreateToastNotifier('Air780Gateway').Show($toast)
 """
@@ -254,14 +280,14 @@ def find_cellular_vuart_port(ports_list: Optional[List[Any]] = None) -> Optional
                 return getattr(p, "device", None)
     return None
 
-def scan_all_cellular_ports() -> List[Dict[str, Any]]:
+def scan_all_cellular_ports(ports_list: Optional[List[Any]] = None) -> List[Dict[str, Any]]:
     """
     智能扫描系统所有合宙/移芯 4G 模组的用户通信主端口 (VID:PID = 19D1:0001, x.6 / MI_06 / VUART_0)。
     严格过滤掉 x.2 (AT/控制口)、x.4 (Trace/日志口) 以及 x.0 刷机口，确保仅返回业务数据通信口。
     """
     results = []
     try:
-        ports = list(serial.tools.list_ports.comports())
+        ports = ports_list if ports_list is not None else list(serial.tools.list_ports.comports())
         for p in ports:
             hwid = (p.hwid or "").upper()
             vid = hex(p.vid).upper() if p.vid else ""
@@ -280,6 +306,22 @@ def scan_all_cellular_ports() -> List[Dict[str, Any]]:
     except Exception as e:
         log(f"扫描串口异常: {e}")
     return results
+
+def _notify_business_result(channel: str, http_code: int, body: bytes):
+    if not 200 <= http_code < 300:
+        return "rejected", f"HTTP_{http_code}"
+    if channel == "webhook":
+        return "http_accepted", "HTTP_2XX"
+    try:
+        receipt = json.loads(body.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        return "unknown", "business_receipt_unavailable"
+    key = "errcode" if channel in ("wecom", "dingtalk") else "code"
+    expected = 200 if channel == "bark" else 0
+    if isinstance(receipt, dict) and key in receipt:
+        return ("accepted", "business_receipt_ok") if receipt[key] == expected else ("rejected", "business_receipt_failed")
+    return "unknown", "business_receipt_unavailable"
+
 
 def test_channel_push(channel: str, cfg: Dict[str, Any], device_desc: Optional[str] = None) -> Dict[str, Any]:
     """单渠道连通性测试 (Test Ping)"""
@@ -313,7 +355,7 @@ def test_channel_push(channel: str, cfg: Dict[str, Any], device_desc: Optional[s
                     {"tag": "hr"},
                     {"tag": "markdown", "content": "**验证码示例：**\n```text\n886622\n```"},
                     {"tag": "hr"},
-                    {"tag": "div", "text": {"tag": "lark_md", "content": f"<font color='grey'>测试设备: {dev_label} （电脑本地宽带代推）</font>"}}
+                    {"tag": "div", "text": {"tag": "lark_md", "content": f"<font color='grey'>测试设备: {dev_label} (上位机推送)</font>"}}
                 ]
             }
         }
@@ -373,11 +415,21 @@ def test_channel_push(channel: str, cfg: Dict[str, Any], device_desc: Optional[s
         t0 = time.time()
         with urllib.request.urlopen(req, timeout=5) as resp:
             cost_ms = int((time.time() - t0) * 1000)
-            return {"ok": resp.status == 200, "status_code": resp.status, "cost_ms": cost_ms}
+            state, reason = _notify_business_result(channel, resp.status, resp.read(4096))
+            return {"ok": state in ("accepted", "http_accepted"), "state": state, "reason": reason,
+                    "status_code": resp.status, "cost_ms": cost_ms}
     except urllib.error.HTTPError as he:
         return {"ok": False, "status_code": he.code, "error": f"HTTP {he.code}", "cost_ms": 0}
     except Exception as e:
-        return {"ok": False, "error": str(e), "cost_ms": 0}
+        return {"ok": False, "state": "unknown", "error": type(e).__name__, "cost_ms": 0}
+
+
+def is_valid_iccid(val: Any) -> bool:
+    """校验是否为符合 ITU-T E.118 国际电信标准的有效 ICCID（89 开头，19~20 位纯数字，兼容末尾 F 填充）"""
+    if not val:
+        return False
+    s = str(val).strip().rstrip("Ff")
+    return bool(re.match(r"^89\d{17,18}$", s))
 
 
 def probe_dongle_fingerprint_from_companion(loc: str, port: str) -> Dict[str, str]:
@@ -419,28 +471,43 @@ def probe_dongle_fingerprint_from_companion(loc: str, port: str) -> Dict[str, st
                 if len(parts) >= 2:
                     if parts[0] != "nil" and len(parts[0]) >= 14:
                         result["imei"] = parts[0]
-                    if parts[1] != "nil" and len(parts[1]) >= 15:
-                        result["iccid"] = parts[1]
+                    if parts[1] != "nil" and is_valid_iccid(parts[1]):
+                        result["iccid"] = parts[1].strip().rstrip("Ff")
 
-            # 2. 若 REPL 模式未读出，兼容标准 AT 模式探测
-            if not result.get("imei") or not result.get("iccid"):
+            # 2. 若 REPL 模式未读出，兼容标准 AT 模式探测（实施前缀白名单与日志过滤）
+            if not result.get("imei"):
                 ser.write(b"AT+CGSN\r\n")
                 time.sleep(0.1)
                 at_cgsn = ser.read(256).decode("utf-8", errors="ignore")
                 for line in at_cgsn.splitlines():
-                    digits = re.sub(r"\D", "", line)
-                    if len(digits) == 15 and not result.get("imei"):
+                    line_clean = line.strip()
+                    if line_clean.startswith(("I/", "W/", "E/", "D/", "~", "CMD received")):
+                        continue
+                    digits = re.sub(r"\D", "", line_clean)
+                    if len(digits) == 15 and (line_clean.startswith("+CGSN:") or digits.startswith(("86", "35", "01", "8689"))):
                         result["imei"] = digits
                         break
 
+            if not result.get("iccid"):
                 ser.write(b"AT+ICCID\r\n")
                 time.sleep(0.1)
                 at_iccid = ser.read(256).decode("utf-8", errors="ignore")
                 for line in at_iccid.splitlines():
-                    digits = re.sub(r"\D", "", line)
-                    if len(digits) in (19, 20) and not result.get("iccid"):
-                        result["iccid"] = digits
-                        break
+                    line_clean = line.strip()
+                    if line_clean.startswith(("I/", "W/", "E/", "D/", "~", "CMD received")):
+                        continue
+                    if line_clean.startswith(("+ICCID:", "+CCID:", "+QCCID:", "^ICCID:")) or line_clean.startswith("89"):
+                        m = re.search(r"89\d{17,18}[Ff]?", line_clean)
+                        if m:
+                            cand = m.group(0).rstrip("Ff")
+                            if is_valid_iccid(cand):
+                                result["iccid"] = cand
+                                break
+                        else:
+                            digits = re.sub(r"\D", "", line_clean)
+                            if is_valid_iccid(digits):
+                                result["iccid"] = digits.rstrip("Ff")
+                                break
     except Exception:
         pass
 
@@ -465,6 +532,8 @@ class DongleSession:
 
         self.ser: Optional[serial.Serial] = None
         self.serial_lock = threading.Lock()
+        self._claim_lock = threading.Lock()
+        self._claim_waiters = {}
         self.is_connected = False
         self.is_flashing = False
         self.maintenance_job: Optional[Dict[str, Any]] = None
@@ -531,6 +600,7 @@ class DongleSession:
                 self.ser = None
             self.is_connected = False
             self.meta["online"] = False
+            self._companion_probed = False
 
     def send_line(self, line: str) -> bool:
         """线程安全向专属物理串口写入一行指令（自动追加 \\r\\n）"""
@@ -607,11 +677,41 @@ class DongleSession:
         ack_pkt = json.dumps({"type": "cmd", "id": f"ack_{int(time.time()*1000)}", "cmd": "notify_ack", "data": {"id": msg_id, "status": status}})
         self.send_line(ack_pkt)
 
+    def claim_push(self, msg_id: str, timeout: float = 4.0) -> str:
+        """Wait for the board's response to this exact claim before any HTTP send."""
+        req_id = "notify_claim_" + uuid.uuid4().hex
+        pending = {"message_id": msg_id, "event": threading.Event(), "result": "unknown"}
+        with self._claim_lock:
+            self._claim_waiters[req_id] = pending
+        packet = json.dumps({"type": "cmd", "id": req_id, "cmd": "notify_ack",
+                             "data": {"id": msg_id, "status": "handled"}})
+        try:
+            if not self.send_line(packet):
+                return "unavailable"
+            pending["event"].wait(timeout)
+            return pending["result"]
+        finally:
+            with self._claim_lock:
+                self._claim_waiters.pop(req_id, None)
+
+    def on_claim_response(self, obj: Dict[str, Any]):
+        if obj.get("type") not in ("res", "response"):
+            return
+        with self._claim_lock:
+            pending = self._claim_waiters.get(obj.get("id"))
+            if not pending:
+                return
+            data = obj.get("data") or {}
+            if not isinstance(data, dict) or data.get("id") != pending["message_id"]:
+                return
+            pending["result"] = "claimed" if obj.get("code") == 0 and obj.get("msg") == "NOTIFY_CLAIMED" else "expired"
+            pending["event"].set()
+
     def _probe_companion_fingerprint_once(self, force: bool = False):
         """若固件响应未包含 imei/iccid，通过伴生端口安全探测真机指纹 (IMEI 与当前 SIM 的 ICCID)"""
         if getattr(self, "is_flashing", False) or getattr(self, "maintenance_job", None) is not None:
             return
-        if not force and self.meta.get("imei") and self.meta.get("iccid"):
+        if not force and self.meta.get("imei") and is_valid_iccid(self.meta.get("iccid")):
             return
         now = time.time()
         last_attempt = getattr(self, "_last_companion_attempt", 0)
@@ -625,11 +725,13 @@ class DongleSession:
                 log(f"[{self.slot_id}] 伴生端口探测成功补齐机身号 IMEI: {fps['imei']}")
                 if self.loc and hasattr(self.hub, "session_pool"):
                     self.hub.session_pool.fingerprint_cache[self.loc] = fps["imei"]
-            if fps.get("iccid"):
+            if fps.get("iccid") and is_valid_iccid(fps["iccid"]):
                 self.meta["iccid"] = fps["iccid"]
                 log(f"[{self.slot_id}] 伴生端口探测成功补齐卡号 ICCID: {fps['iccid']}")
         except Exception as e:
             log(f"[{self.slot_id}] 伴生端口探测异常: {e}")
+        finally:
+            self._companion_probed = True
 
     def pause_for_flash(self, job: Optional[Dict[str, Any]] = None):
         """挂起物理串口以供烧录或固件更新占用 (不再发送 AT/复位)"""
@@ -639,7 +741,7 @@ class DongleSession:
             self.hub.bind_update_session(self)
         self.is_flashing = True
         mode = (self.maintenance_job or {}).get("mode", "script")
-        if mode == "script":
+        if mode in ("script", "full"):
             self._serial_io_paused = True
             with self.serial_lock:
                 if self.ser and self.ser.is_open:
@@ -652,14 +754,17 @@ class DongleSession:
                 self.meta["online"] = False
         else:
             self._serial_io_paused = False
-        log(f"[{self.slot_id}] pause_for_flash (mode={mode})")
+        log(f"[{self.slot_id}] pause_for_flash (mode={mode}) 物理串口已挂起避让")
 
     def resume_after_flash(self):
-        """烧录完成后由 Hub 重新计算绑定，不自主释放"""
+        """烧录完成，重置挂起状态并重新打开物理串口恢复轮询"""
+        self.is_flashing = False
+        self._serial_io_paused = False
+        self.maintenance_job = None
         if hasattr(self.hub, "bind_update_session"):
             self.hub.bind_update_session(self)
         self._ensure_serial_opened()
-        log(f"[{self.slot_id}] resume_after_flash 已重算绑定")
+        log(f"[{self.slot_id}] resume_after_flash 物理串口已恢复轮询")
 
     def _ensure_serial_opened(self) -> bool:
         if hasattr(self.hub, "bind_update_session"):
@@ -673,6 +778,7 @@ class DongleSession:
                     if not self.is_connected:
                         self.is_connected = True
                         self.meta["online"] = True
+                        self._companion_probed = False
                         log(f"[{self.slot_id}] 物理串口连接正常: {self.port}")
                         # 模组初次连接或重新连接上线时，强制探测一次以防插拔换卡导致 ICCID 残留旧值
                         self._probe_companion_fingerprint_once(force=True)
@@ -692,6 +798,7 @@ class DongleSession:
                 self.ser.rts = True
                 self.is_connected = True
                 self.meta["online"] = True
+                self._companion_probed = False
                 log(f"[{self.slot_id}] 成功打开物理串口: {self.port} @ {self.baud}")
                 self._probe_companion_fingerprint_once(force=True)
                 return True
@@ -699,6 +806,7 @@ class DongleSession:
                 self.ser = None
                 self.is_connected = False
                 self.meta["online"] = False
+                self._companion_probed = False
                 return False
 
     def _session_loop(self):
@@ -744,9 +852,11 @@ class DongleSession:
                                     }
                                     self.send_line(json.dumps(poll_pkt))
                         else:
+                            is_active = self.hub.is_in_active_mode() if (self.hub and hasattr(self.hub, "is_in_active_mode")) else True
+                            heartbeat_interval = 5.0 if is_active else 30.0
                             need_poll = not getattr(self, "is_flashing", False) and (
                                 (self.meta.get("bsp") in ("Unknown", "", None)) or 
-                                (now - getattr(self, "_last_status_poll", 0.0) >= 4.0)
+                                (now - getattr(self, "_last_status_poll", 0.0) >= heartbeat_interval)
                             )
                             if need_poll and (now - getattr(self, "_last_poll_send", 0.0) >= 1.5):
                                 self._last_poll_send = now
@@ -762,6 +872,7 @@ class DongleSession:
                     continue
 
                 if not line_bytes:
+                    time.sleep(0.05)
                     continue
 
                 self.rx_buffer.extend(line_bytes)
@@ -794,6 +905,10 @@ class DongleSession:
                         obj["data"]["slot"] = self.slot_id
                         obj["data"]["port"] = self.port
 
+                    # Wake a matching notification claim before any potentially
+                    # slow companion-port identity probe in state refresh.
+                    self.on_claim_response(obj)
+
                     # 2. 更新本会话内部状态
                     self._update_session_state(obj)
 
@@ -811,6 +926,7 @@ class DongleSession:
                         self.ser = None
                     self.is_connected = False
                     self.meta["online"] = False
+                    self._companion_probed = False
                 time.sleep(1.0)
             except Exception as e:
                 log(f"[{self.slot_id}] 会话未捕获异常: {e}")
@@ -830,7 +946,21 @@ class DongleSession:
             if "bsp" in data and data["bsp"]: self.meta["bsp"] = data["bsp"]
             if "version" in data and data["version"]: self.meta["version"] = data["version"]
             if "imei" in data and data["imei"]: self.meta["imei"] = data["imei"]
-            if "iccid" in data and data["iccid"]: self.meta["iccid"] = data["iccid"]
+
+            # 随时清理不符合电信标准的非法脏卡号
+            if self.meta.get("iccid") and not is_valid_iccid(self.meta.get("iccid")):
+                self.meta["iccid"] = ""
+
+            raw_iccid = data.get("iccid")
+            if raw_iccid and is_valid_iccid(raw_iccid):
+                self.meta["iccid"] = str(raw_iccid).strip().rstrip("Ff")
+            elif data.get("sim_ready") is False:
+                self.meta["iccid"] = ""
+            elif "iccid" in data and (not raw_iccid or not is_valid_iccid(raw_iccid)):
+                self.meta["iccid"] = ""
+            elif not raw_iccid and not data.get("net_ready", False) and (data.get("csq") or 0) == 0:
+                self.meta["iccid"] = ""
+
             if "number" in data and data["number"]: self.meta["phone"] = data["number"]
             if "phone" in data and data["phone"]: self.meta["phone"] = data["phone"]
             if "csq" in data and data["csq"] is not None:
@@ -897,23 +1027,25 @@ class DongleSession:
 
             self.meta["online"] = True
 
-            # 若固件响应未包含 imei/iccid，触发伴生口探测补充
-            if not self.meta.get("imei") or not self.meta.get("iccid"):
-                self._probe_companion_fingerprint_once(force=False)
+            # 若未完成伴生口首次探测且关键信息缺失，触发伴生口探测补充（单次生命周期仅触发一次）
+            if not getattr(self, "_companion_probed", False):
+                if not self.meta.get("imei") or not is_valid_iccid(self.meta.get("iccid")):
+                    self._probe_companion_fingerprint_once(force=False)
 
-            # 智能型号归一化
-            raw_model = str(data.get("model") or "")
-            bsp = str(self.meta.get("bsp", ""))
-            if "780EPV" in raw_model or "780EPV" in bsp or "EC718P" in bsp:
-                self.meta["model"] = "Air780EPV"
-            elif "780EC" in raw_model or "780EC" in bsp:
-                self.meta["model"] = "Air780EC"
-            elif "780E" in raw_model or "780E" in bsp or "EC618" in bsp:
-                self.meta["model"] = "Air780E"
-            elif "700E" in raw_model or "700E" in bsp:
-                self.meta["model"] = "Air700E"
-            elif raw_model:
-                self.meta["model"] = raw_model
+            # 板端自省型号与 BSP 原样透传 (Zero Guesswork)
+            bsp_val = str(data.get("bsp") or "").strip()
+            mod_val = str(data.get("model") or "").strip()
+            if bsp_val:
+                self.meta["bsp"] = bsp_val
+            if mod_val:
+                self.meta["model"] = mod_val
+            elif bsp_val and not self.meta.get("model"):
+                self.meta["model"] = bsp_val
+
+            # 若固件响应包含 chip，记录至 meta
+            chip_val = str(data.get("chip") or (data.get("capabilities", {}) or {}).get("chip", "")).strip()
+            if chip_val and chip_val.lower() != "unknown":
+                self.meta["chip"] = chip_val
 
             # 若为初始状态探测帧，主动广播最新的集群卡槽汇总
             if str(obj.get("id", "")).startswith("init_"):
@@ -927,15 +1059,25 @@ class DongleSession:
         elif frame_type == "event":
             evt = obj.get("event")
             if evt == "gateway_ready":
-                if "bsp" in data: self.meta["bsp"] = data["bsp"]
+                if "bsp" in data and data["bsp"]:
+                    self.meta["bsp"] = str(data["bsp"]).strip()
+                if "model" in data and data["model"]:
+                    self.meta["model"] = str(data["model"]).strip()
+                elif self.meta.get("bsp") and not self.meta.get("model"):
+                    self.meta["model"] = self.meta["bsp"]
                 if "version" in data: self.meta["version"] = data["version"]
                 if "imei" in data and data["imei"]: self.meta["imei"] = data["imei"]
-                if "iccid" in data and data["iccid"]: self.meta["iccid"] = data["iccid"]
-                if "capabilities" in data: self.meta["capabilities"] = data["capabilities"]
-                bsp = str(self.meta.get("bsp", ""))
-                if "780EPV" in bsp or "EC718P" in bsp: self.meta["model"] = "Air780EPV"
-                elif "780EC" in bsp: self.meta["model"] = "Air780EC"
-                elif "780E" in bsp or "EC618" in bsp: self.meta["model"] = "Air780E"
+                raw_gw_iccid = data.get("iccid")
+                if raw_gw_iccid and is_valid_iccid(raw_gw_iccid):
+                    self.meta["iccid"] = str(raw_gw_iccid).strip().rstrip("Ff")
+                elif "iccid" in data and (not raw_gw_iccid or not is_valid_iccid(raw_gw_iccid)):
+                    self.meta["iccid"] = ""
+                if "capabilities" in data:
+                    self.meta["capabilities"] = data["capabilities"]
+                    if isinstance(data["capabilities"], dict) and data["capabilities"].get("chip"):
+                        chip_cand = str(data["capabilities"]["chip"]).strip()
+                        if chip_cand.lower() != "unknown":
+                            self.meta["chip"] = chip_cand
             elif evt == "state_change":
                 if "csq" in data: self.meta["csq"] = data["csq"]
                 if "rsrp" in data: self.meta["rsrp"] = data["rsrp"]
@@ -958,6 +1100,10 @@ class DongleSession:
                 "result": self.maintenance_job.get("result"),
                 "error": self.maintenance_job.get("error"),
             }
+        out_iccid = self.meta.get("iccid", "")
+        if out_iccid and not is_valid_iccid(out_iccid):
+            out_iccid = ""
+
         return {
             "slot": self.slot_id,
             "port": self.port,
@@ -970,7 +1116,7 @@ class DongleSession:
             "build_id": self.meta.get("build_id"),
             "serial_ota": self.meta.get("serial_ota"),
             "imei": self.meta.get("imei", ""),
-            "iccid": self.meta.get("iccid", ""),
+            "iccid": out_iccid,
             "phone": self.meta.get("phone", ""),
             "version": self.meta.get("version", ""),
             "online": self.is_connected,
@@ -1003,6 +1149,10 @@ class DongleSessionPool:
         self.running = False
         self.scanner_thread: Optional[threading.Thread] = None
 
+        # 插拔检测与低功耗事件唤醒 (AIR-64)
+        self._scan_wake_event = threading.Event()
+        self._last_disconnect_time: float = 0.0
+
         # 卡槽历史记忆 (以 loc 或 port 为 key，确保拔插后分配同一卡槽)
         self.slot_history: Dict[str, str] = {}
         # 模组硬件指纹缓存池 (拔插/复位不丢 IMEI/ICCID)
@@ -1020,10 +1170,16 @@ class DongleSessionPool:
 
     def stop(self):
         self.running = False
+        self.wake_scan()
         with self.pool_lock:
             for s in list(self.sessions.values()):
                 s.stop()
             self.sessions.clear()
+
+    def wake_scan(self):
+        """外部唤醒插拔扫描循环 (AIR-64)"""
+        if hasattr(self, "_scan_wake_event"):
+            self._scan_wake_event.set()
 
     def _allocate_slot(self, port: str, loc: str) -> str:
         """为新发现的端口分配稳定卡槽 ID（拓扑亲和性，防止卡槽漂移倒错）"""
@@ -1058,8 +1214,14 @@ class DongleSessionPool:
                 idx += 1
 
     def _sync_ports(self):
-        """执行一次全量串口扫描并执行增量会话同步"""
-        detected_list = scan_all_cellular_ports()
+        """执行一次全量串口扫描并执行增量会话同步 (AIR-64: 单次硬件设备树扫描复用)"""
+        try:
+            raw_ports = list(serial.tools.list_ports.comports())
+        except Exception as e:
+            log(f"获取系统串口列表异常: {e}")
+            raw_ports = []
+
+        detected_list = scan_all_cellular_ports(ports_list=raw_ports)
         detected_ports = set(d["port"] for d in detected_list)
 
         with self.pool_lock:
@@ -1097,6 +1259,7 @@ class DongleSessionPool:
                 if p not in detected_ports:
                     session = self.sessions.pop(p)
                     slot_id = session.slot_id
+                    self._last_disconnect_time = time.time()
                     session.stop()
                     log(f"⚠️ [CLUSTER] 检测到卡板断开拔出: {p} (曾用卡槽: 【{slot_id}】)")
                     # 广播模组断开事件
@@ -1107,9 +1270,9 @@ class DongleSessionPool:
                         "data": {"slot": slot_id, "port": p, "online": False}
                     })
 
-            # AIR-35: 探测未绑定的移芯出厂态/Bootloader 端口 (全量安全嗅探，无竞争)
+            # AIR-35: 探测未绑定的移芯出厂态/Bootloader 端口 (全量安全嗅探，无竞争，复用单次枚举)
             try:
-                self._sniff_unassigned_dongles(current_ports)
+                self._sniff_unassigned_dongles(current_ports, ports_list=raw_ports)
             except Exception as e:
                 log(f"未分配模组探测异常: {e}")
 
@@ -1130,15 +1293,24 @@ class DongleSessionPool:
             except Exception as e:
                 log(f"[sniff] update_jobs 异常或故障，判定为占用避让 {getattr(p, 'device', '')}: {e}")
                 return True
+
+        # 检查未分配设备维护租约 (AIR-44 防并发嗅探干扰)
+        if hasattr(self.hub, "_unassigned_leases") and self.hub._unassigned_leases:
+            dev_name = getattr(p, "device", "") or ""
+            lease_key = f"unassigned_{dev_name}"
+            lease = self.hub._unassigned_leases.get(lease_key)
+            if lease and (time.time() - lease.get("started_at", 0) < 120.0):
+                return True
+
         return False
 
-    def _sniff_unassigned_dongles(self, bound_ports: set):
+    def _sniff_unassigned_dongles(self, bound_ports: set, ports_list: Optional[List[Any]] = None):
         """
         AIR-35: 扫描系统上未绑定到 DongleSession 的移芯/合宙 4G 模组端口
         识别出厂标准 AT 固件 (19D1) 或 ROM Bootloader 态 (17D1)
         """
         unassigned = []
-        all_coms = list(serial.tools.list_ports.comports())
+        all_coms = ports_list if ports_list is not None else list(serial.tools.list_ports.comports())
         
         # 1. 寻找未绑定的 Bootloader (17D1:0001)
         for p in all_coms:
@@ -1183,7 +1355,7 @@ class DongleSessionPool:
             # 仅嗅探 19D1 的 AT 控制口 (x.2) 或主通信口 (x.6)
             if ("19D1:0001" in hwid or ("19D1" in vid and "0001" in pid)):
                 if loc.endswith("x.2") or ":X.2" in loc.upper() or loc.endswith("x.6") or ":X.6" in loc.upper() or "MI_02" in hwid or "MI_06" in hwid:
-                    # 轻量下发 ATI 测试是否为出厂 AT 态
+                    # 轻量下发 ATI 测试是否为出厂 AT 态 (支持 Air780EPM, Air780EPV/EP, Air780E/EC)
                     model = "移芯模组 (出厂 AT 态)"
                     chip = "ec718pv"
                     try:
@@ -1192,11 +1364,14 @@ class DongleSessionPool:
                             ser.flush()
                             time.sleep(0.1)
                             raw = ser.read(ser.in_waiting or 256).decode("utf-8", errors="ignore")
-                            if "Air780EP" in raw or "EC718" in raw:
+                            if "Air780EPM" in raw or "EC718PM" in raw or "780EPM" in raw:
+                                model = "合宙 Air780EPM (出厂 AT 固件)"
+                                chip = "ec718pm"
+                            elif "Air780EP" in raw or "EC718PV" in raw or "EC718" in raw:
                                 model = "合宙 Air780EPV/EP (出厂 AT 固件)"
                                 chip = "ec718pv"
-                            elif "Air780E" in raw or "EC618" in raw:
-                                model = "合宙 Air780E (出厂 AT 固件)"
+                            elif "Air780E" in raw or "Air780EC" in raw or "EC618" in raw:
+                                model = "合宙 Air780E/EC (出厂 AT 固件)"
                                 chip = "ec618"
                             elif "Air700E" in raw:
                                 model = "合宙 Air700E (出厂 AT 固件)"
@@ -1209,6 +1384,7 @@ class DongleSessionPool:
                         "desc": p.description,
                         "mode": "factory_at",
                         "chip": chip,
+                        "recommend_chip": chip,
                         "model_guess": model,
                         "recommend_flash": "full"
                     })
@@ -1231,13 +1407,21 @@ class DongleSessionPool:
             return list(self.unassigned_dongles)
 
     def _scan_loop(self):
-        """后台轮询扫描，感知热插拔"""
+        """后台轮询扫描，感知热插拔 (AIR-64 自适应能耗退避与可中断等待)"""
         while self.running:
             try:
                 self._sync_ports()
             except Exception as e:
                 log(f"会话池扫描循环异常: {e}")
-            time.sleep(2.5)
+
+            is_active = self.hub.is_in_active_mode() if (self.hub and hasattr(self.hub, "is_in_active_mode")) else False
+            has_recent_disconnect = (time.time() - getattr(self, "_last_disconnect_time", 0.0) < 15.0)
+
+            # 1. 若处于活动态、或刚刚发生拔卡断开、或当前 0 设备在线等待接入：保持 3.0 秒敏捷感知
+            # 2. 若处于低功耗守护态且既有卡槽健康在线：平滑退避至 15.0 秒低能耗巡检
+            sleep_time = 3.0 if (is_active or has_recent_disconnect or len(self.sessions) == 0) else 15.0
+            self._scan_wake_event.wait(timeout=sleep_time)
+            self._scan_wake_event.clear()
 
     def get_session(self, target: Optional[str] = None, active_only: bool = True) -> Optional[DongleSession]:
         """
@@ -1696,6 +1880,70 @@ class UpdateJobStore:
 # 核心类：GatewayHub (网关多路共享中枢与广播总线)
 # =========================================================================
 
+class NotifyJournal:
+    """Durable ownership/results ledger; never stores message content or credentials."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self.lock = threading.RLock()
+        self.entries = {}
+        self.fault = False
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    loaded = json.load(f)
+                if not isinstance(loaded, dict):
+                    raise ValueError("invalid journal")
+                self.entries = loaded
+            except (OSError, ValueError):
+                self.fault = True
+
+    def _persist(self):
+        next_path = self.path + ".next"
+        with open(next_path, "w", encoding="utf-8") as f:
+            json.dump(self.entries, f, ensure_ascii=False)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(next_path, self.path)
+
+    def begin(self, key: str, slot: str, msg_id: str) -> str:
+        with self.lock:
+            if self.fault:
+                return "fault"
+            if key in self.entries:
+                return "duplicate"
+            self.entries[key] = {"slot": slot, "message_id": msg_id, "state": "seen",
+                                 "channels": {}, "updated_at": time.time()}
+            try:
+                self._persist()
+            except OSError:
+                self.entries.pop(key, None)
+                self.fault = True
+                return "fault"
+            return "new"
+
+    def record(self, key: str, state: str = None, channel: str = None, result: str = None):
+        with self.lock:
+            entry = self.entries.get(key)
+            if not entry or self.fault:
+                return False
+            if state:
+                entry["state"] = state
+            if channel:
+                entry["channels"][channel] = result
+            entry["updated_at"] = time.time()
+            try:
+                self._persist()
+                return True
+            except OSError:
+                self.fault = True
+                return False
+
+    def recent(self):
+        with self.lock:
+            return sorted(self.entries.values(), key=lambda e: e.get("updated_at", 0), reverse=True)[:100]
+
+
 class GatewayHub:
     def __init__(self, host: str = HUB_HOST, port: int = HUB_PORT, com: Optional[str] = None, baud: int = SERIAL_BAUD):
         self.host = host
@@ -1710,6 +1958,7 @@ class GatewayHub:
 
         # 维护任务存储 (AIR-38 S04A)
         self.update_jobs = UpdateJobStore(os.path.join(DATA_DIR, "update_jobs.json"))
+        self.notify_journal = NotifyJournal(os.path.join(DATA_DIR, "notify_results.json"))
 
         # 动态会话池
         self.session_pool = DongleSessionPool(self)
@@ -1731,6 +1980,29 @@ class GatewayHub:
         self._save_session_token()
         # 记录各客户端 socket 属性: { sock: {"source": "web"|"mcp", "authenticated": bool} }
         self.client_meta: Dict[socket.socket, Dict[str, Any]] = {}
+
+        # 活跃度看门狗与低功耗模式支持 (AIR-64)
+        self.last_active_time: float = time.time()
+        self.active_sse_count: int = 0
+
+    def touch_activity(self, active_sse_count: Optional[int] = None):
+        """刷新中枢交互活跃时间，可同步更新活跃 SSE 监听数 (AIR-64)"""
+        self.last_active_time = time.time()
+        if active_sse_count is not None:
+            self.active_sse_count = max(0, int(active_sse_count))
+        if hasattr(self, "session_pool") and self.session_pool:
+            self.session_pool.wake_scan()
+
+    def is_in_active_mode(self) -> bool:
+        """
+        判定当前是否处于活动交互态 (AIR-64):
+        若有浏览器 Web 页面打开中 (active_sse_count > 0) 或 30s 内有用户/API 交互，判定为活动态；
+        否则判定为低功耗静默守护态 (Eco Daemon Mode)。
+        """
+        now = time.time()
+        is_web_open = (getattr(self, "active_sse_count", 0) > 0)
+        is_recently_active = (now - getattr(self, "last_active_time", 0.0) < 30.0)
+        return is_web_open or is_recently_active
 
     def _save_session_token(self):
         """将内部免检令牌安全写入宿主本地数据目录"""
@@ -1988,7 +2260,7 @@ class GatewayHub:
         session._serial_io_paused = False
         return None
 
-    def _load_notify_config(self) -> Dict[str, Any]:
+    def _load_notify_config(self, strict: bool = False) -> Dict[str, Any]:
         """加载通知配置"""
         json_path = GATEWAY_CONFIG_PATH
         cfg = {
@@ -2004,6 +2276,8 @@ class GatewayHub:
             try:
                 with open(json_path, "r", encoding="utf-8") as f:
                     loaded = json.load(f)
+                if not isinstance(loaded, dict):
+                    raise ValueError("配置根节点必须是对象")
                 for k, v in loaded.items():
                     if k in cfg and isinstance(v, dict):
                         cfg[k].update(v)
@@ -2018,12 +2292,15 @@ class GatewayHub:
                 log(f"成功加载网关配置: 自动复制验证码={self.auto_copy_otp}, MCP物理开关={mcp_on}, 已启用渠道={enabled_list}")
                 return cfg
             except Exception as e:
-                log(f"解析 gateway_config.json 异常: {e}")
+                log(f"解析 gateway_config.json 异常: {type(e).__name__}")
+                if strict:
+                    raise
         return cfg
 
     def reload_notify_config(self) -> Dict[str, Any]:
         with self.state_lock:
-            self.notify_config = self._load_notify_config()
+            new_config = self._load_notify_config(strict=True)
+            self.notify_config = new_config
             self.auto_copy_otp = bool(self.notify_config.get("system", {}).get("auto_copy_otp", True))
             self.mcp_config = dict(self.notify_config.get("mcp", {"enabled": False, "port": 17800}))
             log(f"通知与MCP配置热重载完成 (自动复制: {self.auto_copy_otp}, MCP开启: {self.mcp_config.get('enabled', False)})")
@@ -2102,6 +2379,7 @@ class GatewayHub:
 
     def on_session_frame(self, session: DongleSession, obj: Dict[str, Any], raw_line: str):
         """会话上报 NDJSON 帧的总线接收入口"""
+        session.on_claim_response(obj)
         frame_type = obj.get("type")
         evt = obj.get("event")
         data = obj.get("data") or {}
@@ -2119,20 +2397,37 @@ class GatewayHub:
                         "content": data.get("content"),
                         "time": obj.get("ts", int(time.time()))
                     }
-                # 构造自然大白话设备标签 (AIR-31)
-                dev_model = getattr(session, "model", "") or ("Air780E" if session.slot_id == "slot_2" else "Air780EPV")
-                dev_model = str(dev_model).replace("合宙", "").strip()
-                s_phone = str(getattr(session, "phone", "") or getattr(session, "number", "") or "")
-                clean_p = re.sub(r"\D", "", s_phone)
-                s_tail = clean_p[-4:] if len(clean_p) >= 4 else ""
-                slot_label = f"[{dev_model}·{s_tail}]" if s_tail else f"[{dev_model}]"
+                # 构造大白话业务卡标签 (AIR-54)
+                ident = self._resolve_slot_identity(session, data)
+                slot_label = ident["display_tag"]
+                sys_cfg = self.notify_config.get("system", {}) if isinstance(self.notify_config, dict) else {}
+                toast_enabled = bool(sys_cfg.get("desktop_notification", True))
+                privacy_on = bool(sys_cfg.get("privacy_mode", False))
+
                 if getattr(self, "auto_copy_otp", True):
                     if set_windows_clipboard(code):
                         log(f"⚡ [CLIPBOARD] 验证码 {slot_label} [{code}] 已自动存入 Windows 剪贴板")
-                        show_windows_toast("Air780 网关验证码", f"⚡ {slot_label} 捕获验证码：{code} (已存入剪贴板，直接按 Ctrl+V 粘贴)")
+                        if toast_enabled:
+                            if privacy_on:
+                                show_windows_toast("数字蜂巢 · 验证码", "⚡ 收到登录验证码 (已存入剪贴板，直接按 Ctrl+V 粘贴)", privacy=True)
+                            else:
+                                show_windows_toast("数字蜂巢 · 验证码", f"⚡ {slot_label} 捕获验证码：{code} (已存入剪贴板，直接按 Ctrl+V 粘贴)")
                 else:
                     log(f"⚡ [OTP] 捕获验证码 {slot_label} [{code}]")
-                    show_windows_toast("Air780 网关验证码", f"⚡ {slot_label} 捕获验证码：{code}")
+                    if toast_enabled:
+                        if privacy_on:
+                            show_windows_toast("数字蜂巢 · 验证码", "⚡ 收到登录验证码 (点击进入控制台查看)", privacy=True)
+                        else:
+                            show_windows_toast("数字蜂巢 · 验证码", f"⚡ {slot_label} 捕获验证码：{code}")
+            else:
+                # 纯文本非验证码普通短信弹窗
+                sys_cfg = self.notify_config.get("system", {}) if isinstance(self.notify_config, dict) else {}
+                if sys_cfg.get("desktop_notification", True):
+                    ident = self._resolve_slot_identity(session, data)
+                    sender = data.get("from") or "未知发件人"
+                    content_snippet = (data.get("content") or "").replace("\n", " ")[:40]
+                    privacy_on = bool(sys_cfg.get("privacy_mode", False))
+                    show_windows_toast(f"📩 {ident['display_tag']} 收到新短信", f"发件人: {sender}\n{content_snippet}", privacy=privacy_on)
 
         # 2. 触发宿主宽带代推
         if frame_type == "event" and evt in ("sms_rx", "call_rx", "gateway_ready", "state_change"):
@@ -2169,6 +2464,105 @@ class GatewayHub:
         is_sms = frame_type == "event" and evt in ("sms_rx", "sms_received")
         self.broadcast_text(broadcast_line + "\n", is_sms_event=is_sms)
 
+    def _resolve_slot_identity(self, session: DongleSession, data: Optional[Dict[str, Any]] = None) -> Dict[str, str]:
+        """
+        统一解析业务卡身份元数据，输出 4 级全自动优雅降级的大白话人话标签 (AIR-54)
+        L1: 运营商 + 尾号 (例: 【中国联通 3879】)
+        L2: 运营商 + 卡槽 (例: 【中国移动 (卡槽 1)】)
+        L3: 纯手机号 + 尾号 (例: 【手机卡 3879】)
+        L4: 纯卡槽 + 型号兜底 (例: 【卡槽 2 · Air780EPM】)
+        """
+        data = data or {}
+        meta = getattr(session, "meta", {}) or {}
+
+        # 1. 槽位中文名与端口
+        raw_slot = str(getattr(session, "slot_id", "") or meta.get("slot", "") or data.get("slot", "")).lower()
+        m_slot = re.search(r"slot_?(\d+)", raw_slot)
+        slot_num = m_slot.group(1) if m_slot else raw_slot.replace("slot_", "").replace("slot", "")
+        slot_cn = f"卡槽 {slot_num}" if slot_num else (raw_slot or "卡槽")
+
+        port = str(getattr(session, "port", "") or meta.get("port", "") or data.get("port", "") or "").strip()
+        port_suffix = f" · {port}" if port else ""
+
+        model = str(meta.get("model") or getattr(session, "model", "") or data.get("model") or data.get("bsp") or "Air780").replace("合宙", "").strip() or "Air780"
+        imei = str(meta.get("imei") or data.get("imei") or "").strip()
+
+        # 2. 手机号码安全清洗与尾号截取
+        raw_phone = meta.get("phone") or getattr(session, "phone", "") or data.get("formatted_number") or data.get("number") or ""
+        clean_num = clean_phone_number(raw_phone) if raw_phone else ""
+        phone_digits = re.sub(r"\D", "", clean_num or str(raw_phone))
+        if phone_digits.startswith("86") and len(phone_digits) == 13:
+            phone_digits = phone_digits[2:]
+
+        phone_masked = ""
+        phone_tail = ""
+        if len(phone_digits) >= 11:
+            phone_masked = f"{phone_digits[:3]}****{phone_digits[-4:]}"
+            phone_tail = phone_digits[-4:]
+        elif 7 <= len(phone_digits) < 11:
+            phone_masked = f"{phone_digits[:2]}****{phone_digits[-2:]}"
+            phone_tail = phone_digits[-4:]
+        elif phone_digits:
+            phone_masked = phone_digits
+            phone_tail = ""
+
+        # 3. 运营商推导 (三级全自动优先级 · 严格复用 cluster_router)
+        carrier_full = ""
+        carrier_short = ""
+
+        # 优先级 1: ICCID 算法查表
+        iccid = str(meta.get("iccid") or data.get("iccid") or "").strip()
+        if iccid:
+            c_code = detect_sim_carrier(iccid)
+            if c_code in CARRIER_NAME_MAP:
+                carrier_full, carrier_short = CARRIER_NAME_MAP[c_code]
+
+        # 优先级 2: 手机号段推导 (复用 detect_phone_carrier)
+        if not carrier_full and phone_digits:
+            c_code = detect_phone_carrier(phone_digits)
+            if c_code in CARRIER_NAME_MAP:
+                carrier_full, carrier_short = CARRIER_NAME_MAP[c_code]
+
+        # 优先级 3: 短信内容头部签名或客服号码特征
+        if not carrier_full:
+            sender = str(data.get("from") or "")
+            content = str(data.get("content") or "")
+            clean_s = clean_phone_number(sender)
+            if clean_s == "10010" or sender in ("10010", "+8610010") or "【中国联通】" in content:
+                carrier_full, carrier_short = "中国联通", "联通"
+            elif clean_s == "10086" or sender in ("10086", "+8610086") or "【中国移动】" in content:
+                carrier_full, carrier_short = "中国移动", "移动"
+            elif clean_s == "10000" or sender in ("10000", "+8610000") or "【中国电信】" in content:
+                carrier_full, carrier_short = "中国电信", "电信"
+            elif clean_s == "10099" or sender in ("10099", "+8610099") or "【中国广电】" in content:
+                carrier_full, carrier_short = "中国广电", "广电"
+
+        # 4. 4 级优雅降级合成 display_tag
+        if carrier_full and phone_tail:
+            display_tag = f"【{carrier_full} {phone_tail}】"
+        elif carrier_full:
+            display_tag = f"【{carrier_full} ({slot_cn})】"
+        elif phone_tail:
+            display_tag = f"【手机卡 {phone_tail}】"
+        else:
+            display_tag = f"【{slot_cn} · {model}】"
+
+        device_desc = f"[{slot_cn}{port_suffix}] {model}"
+
+        return {
+            "slot_id": getattr(session, "slot_id", "") or raw_slot,
+            "slot_cn": slot_cn,
+            "port": port,
+            "model": model,
+            "imei": imei,
+            "carrier": carrier_full,
+            "carrier_short": carrier_short,
+            "phone_masked": phone_masked,
+            "phone_tail": phone_tail,
+            "display_tag": display_tag,
+            "device_desc": device_desc,
+        }
+
     def _dispatch_host_proxy_push(self, session: DongleSession, event_type: str, data: Dict[str, Any]):
         """借用宿主电脑本地宽带优先代推全渠道通知，并向模组回送 Push ACK 握手回执"""
         # 只要宿主在线，无论板端是否开启蜂窝数据，一律由宿主电脑本地宽带优先代推（杜绝消耗 SIM 流量）
@@ -2178,51 +2572,55 @@ class GatewayHub:
             m = re.search(r"(?:\+86)?(\d{11})", str(raw_num))
             return f"{m.group(1)} +86" if m else str(raw_num)
 
-        slot_tag = f"【{session.meta.get('model', 'Air780')} ({session.slot_id.upper()})】"
-        dev_model = data.get("model") or data.get("bsp") or session.meta.get("model") or session.meta.get("bsp") or "Air780"
-        dev_imei = data.get("imei") or session.meta.get("imei") or ""
-        imei_part = f" · IMEI: {dev_imei}" if dev_imei else ""
-        dev_desc = f"[{session.slot_id.upper()}] {dev_model}{imei_part}"
+        ident = self._resolve_slot_identity(session, data)
+        display_tag = ident["display_tag"]
+        device_desc = ident["device_desc"]
+        imei_part = f" · IMEI: {ident['imei']}" if ident["imei"] else ""
+        dev_desc = f"{device_desc}{imei_part}"
 
         title = ""
         plain_text = ""
         md_text = ""
         extra_otp = ""
+        now_str = time.strftime("%Y-%m-%d %H:%M:%S")
 
         if event_type == "sms_rx":
             sender = data.get("from", "未知")
             content = data.get("content", "")
             code = data.get("code", "")
             extra_otp = code or ""
-            title = f"📩 [{session.slot_id.upper()}] 收到新短信"
+            is_otp = bool(extra_otp)
+            title_icon = "🔑" if is_otp else "📩"
+            title_action = "收到短信验证码" if is_otp else "收到新短信"
+            title = f"{title_icon} {display_tag} {title_action}"
+
             otp_str = f"\r\n🔑 提取验证码: 【{code}】" if code else ""
             otp_md = f"\n> **提取验证码**: <font color=\"warning\">{code}</font>" if code else ""
-            plain_text = f"发件人: {sender}\r\n内容: {content}{otp_str}\r\n\r\n设备: {dev_desc} （电脑本地宽带代推）"
-            md_text = f"### {title}\n> **发件人**: {sender}\n> **短信正文**: {content}{otp_md}\n\n> **来源设备**: {dev_desc} （电脑本地宽带代推）"
+            plain_text = f"发件人: {sender}\r\n接收时间: {now_str}\r\n内容: {content}{otp_str}\r\n\r\n设备: {dev_desc} (上位机推送)"
+            md_text = f"### {title}\n> **发件人**: {sender}\n> **接收时间**: {now_str}\n> **短信正文**: {content}{otp_md}\n\n> **来源设备**: {dev_desc} (上位机推送)"
 
         elif event_type == "call_rx":
             sender = data.get("from", "未知号码")
             is_fota = bool(data.get("fota_trigger"))
             if is_fota:
-                title = f"⚡ [{session.slot_id.upper()}] 识别暗号呼叫：激活 FOTA 空中更新"
-                plain_text = f"呼入号码: {sender}\r\n动作: 识别管理员暗号呼叫，已 0 话费拒接，正在激活 4G 蜂窝空中热更新探测...\r\n\r\n设备: {dev_desc} （电脑本地宽带代推）"
-                md_text = f"### {title}\n> **呼入号码**: {sender}\n> **处理动作**: 识别管理员暗号呼叫，已 0 话费拒接，正在激活 4G 空中热更新...\n\n> **来源设备**: {dev_desc} （电脑本地宽带代推）"
+                title = f"⚡ {display_tag} 识别暗号呼叫：激活空中更新"
+                plain_text = f"呼入号码: {sender}\r\n接收时间: {now_str}\r\n动作: 识别暗号呼叫，已自动拒接，正在检测空中更新...\r\n\r\n设备: {dev_desc} (上位机推送)"
+                md_text = f"### {title}\n> **呼入号码**: {sender}\n> **接收时间**: {now_str}\n> **处理动作**: 识别暗号呼叫，已自动拒接，正在检测空中更新...\n\n> **来源设备**: {dev_desc} (上位机推送)"
             else:
-                title = f"📞 [{session.slot_id.upper()}] 拦截到呼入电话"
-                plain_text = f"呼入号码: {sender}\r\n动作: 已自动秒级拒接 (双方0元话费)\r\n\r\n设备: {dev_desc} （电脑本地宽带代推）"
-                md_text = f"### {title}\n> **呼入号码**: {sender}\n> **拦截动作**: 已自动秒级拒接 (双方0元话费)\n\n> **来源设备**: {dev_desc} （电脑本地宽带代推）"
+                title = f"📞 {display_tag} 拦截到呼入电话"
+                plain_text = f"呼入号码: {sender}\r\n接收时间: {now_str}\r\n动作: 已自动拒接\r\n\r\n设备: {dev_desc} (上位机推送)"
+                md_text = f"### {title}\n> **呼入号码**: {sender}\n> **接收时间**: {now_str}\n> **拦截动作**: 已自动拒接\n\n> **来源设备**: {dev_desc} (上位机推送)"
 
         elif event_type in ("gateway_ready", "state_change"):
-            title = f"🚀 [{session.slot_id.upper()}] 智能网关已上线" if event_type == "gateway_ready" else f"⚙️ [{session.slot_id.upper()}] 配置状态变更"
-            bsp = data.get("bsp", session.meta.get("bsp", "Air780"))
-            num = _format_phone_number(data.get("formatted_number") or data.get("number"))
+            title = f"🚀 {display_tag} 智能网关已上线" if event_type == "gateway_ready" else f"⚙️ {display_tag} 配置状态变更"
+            num = _format_phone_number(data.get("formatted_number") or data.get("number") or ident["phone_masked"])
             csq = data.get("csq") if data.get("csq") is not None else "未知"
             rsrp = data.get("rsrp") if data.get("rsrp") is not None else "未知"
             temp = data.get("temp") if data.get("temp") is not None else "未知"
             vbat = data.get("vbat") if data.get("vbat") is not None else "未知"
             ver = data.get("version") if data.get("version") is not None else "未知"
             plain_text = (
-                f"设备来源：{dev_desc} （电脑本地宽带代推）\r\n"
+                f"设备来源：{dev_desc} (上位机推送)\r\n"
                 f"端口路径：{session.port}\r\n"
                 f"本机号码：{num}\r\n"
                 f"信号强度：CSQ {csq} (RSRP {rsrp} dBm)\r\n"
@@ -2243,12 +2641,10 @@ class GatewayHub:
             card_title = title
             if event_type == "sms_rx":
                 card_template = "orange" if extra_otp else "blue"
-                card_title = f"🔑 {slot_tag} 收到短信验证码" if extra_otp else f"📩 {slot_tag} 收到新短信"
                 sender = data.get("from", "未知")
                 content = data.get("content", "")
-                now_str = time.strftime("%Y-%m-%d %H:%M:%S")
                 body_elements = [
-                    {"tag": "markdown", "content": f"**卡槽来源：** {slot_tag}\n**发件人：** `{sender}`\n**接收时间：** {now_str}"},
+                    {"tag": "markdown", "content": f"**发件人：** `{sender}`\n**接收时间：** {now_str}"},
                     {"tag": "hr"}
                 ]
                 if extra_otp:
@@ -2262,7 +2658,7 @@ class GatewayHub:
                     "tag": "div",
                     "text": {
                         "tag": "lark_md",
-                        "content": f"<font color='grey'>来源设备: {dev_desc} （电脑本地宽带代推）</font>"
+                        "content": f"<font color='grey'>来源设备: {dev_desc} (上位机推送)</font>"
                     }
                 })
             else:
@@ -2272,7 +2668,7 @@ class GatewayHub:
                     "tag": "div",
                     "text": {
                         "tag": "lark_md",
-                        "content": f"<font color='grey'>来源设备: {dev_desc} （电脑本地宽带代推）</font>"
+                        "content": f"<font color='grey'>来源设备: {dev_desc} (上位机推送)</font>"
                     }
                 })
 
@@ -2313,8 +2709,9 @@ class GatewayHub:
         # 4. Bark
         bark_cfg = self.notify_config.get("bark", {})
         if bark_cfg.get("enable") and bark_cfg.get("url"):
+            bark_title = f"{title_icon} {display_tag}" if event_type == "sms_rx" else title
             bark_data = {
-                "title": title,
+                "title": bark_title,
                 "body": plain_text,
                 "group": bark_cfg.get("group", "Air780Gateway"),
                 "sound": bark_cfg.get("sound", "minuet")
@@ -2331,8 +2728,12 @@ class GatewayHub:
                 "event": event_type,
                 "slot": session.slot_id,
                 "port": session.port,
-                "model": dev_model,
-                "imei": dev_imei,
+                "model": ident["model"],
+                "imei": ident["imei"],
+                "carrier": ident["carrier"],
+                "phone": ident["phone_masked"],
+                "phone_tail": ident["phone_tail"],
+                "display_tag": ident["display_tag"],
                 "device_desc": dev_desc,
                 "timestamp": int(time.time()),
                 "data": data,
@@ -2340,66 +2741,118 @@ class GatewayHub:
             }
             channels_to_send.append(("webhook", webhook_cfg["url"], wh_body))
 
-        if not channels_to_send:
-            # 未开启任何渠道，定向给该设备回执 ok 以免其误进入降级自推
-            if msg_id:
-                session.ack_push(msg_id, "ok")
+        # 飞书验证码气泡属于同一消息的第二次投递，也写入同一结果记录。
+        if feishu_cfg.get("enable") and feishu_cfg.get("url") and extra_otp:
+            pure_dict = {"msg_type": "text", "content": {"text": str(extra_otp)}}
+            sec2 = (feishu_cfg.get("secret") or "").strip()
+            if sec2:
+                ts2 = str(int(time.time()))
+                s2 = f"{ts2}\n{sec2}"
+                hm2 = hmac.new(s2.encode("utf-8"), digestmod=hashlib.sha256).digest()
+                pure_dict["timestamp"] = ts2
+                pure_dict["sign"] = base64.b64encode(hm2).decode("utf-8")
+            channels_to_send.append(("feishu_otp", feishu_cfg["url"], pure_dict))
+
+        if not msg_id:
+            log(f"[{session.slot_id}] 通知没有消息 id，宿主不外发")
+            return
+        device_key = session.meta.get("imei") or session.loc or session.port
+        journal_key = hashlib.sha256(json.dumps(
+            [device_key, session.meta.get("boot_id"), msg_id], ensure_ascii=False
+        ).encode("utf-8")).hexdigest()
+        journal = getattr(self, "notify_journal", None)
+        if not journal:
+            total_channels = len(channels_to_send)
+            completed_count = [0]
+            success_count = [0]
+            ack_sent = [False]
+            ack_lock = threading.Lock()
+
+            def _send_ack_safe(status: str):
+                if not ack_sent[0] and msg_id:
+                    ack_sent[0] = True
+                    session.ack_push(msg_id, status)
+                    log(f"[{session.slot_id}] 宽带代推已定向回执 ACK -> 【{status}】(msg_id: {msg_id})")
+
+            def _send_channel(ch_name: str, url: str, payload_dict: Dict[str, Any]):
+                payload_bytes = json.dumps(payload_dict, ensure_ascii=False).encode("utf-8")
+                succ = False
+                try:
+                    req = urllib.request.Request(url, data=payload_bytes, headers={"Content-Type": "application/json; charset=utf-8"})
+                    with urllib.request.urlopen(req, timeout=5) as resp:
+                        if resp.status == 200:
+                            succ = True
+                            log(f"[{session.slot_id}] 宿主宽带代推 [{event_type}] 到 {ch_name} 成功 (HTTP 200)")
+                except Exception as e:
+                    log(f"[{session.slot_id}] 宿主宽带代推 [{event_type}] 到 {ch_name} 失败: {e}")
+
+                with ack_lock:
+                    completed_count[0] += 1
+                    if succ:
+                        success_count[0] += 1
+                        _send_ack_safe("ok")
+                    elif completed_count[0] >= total_channels and success_count[0] == 0:
+                        _send_ack_safe("failed")
+
+            for ch_name, ch_url, ch_body in channels_to_send:
+                threading.Thread(target=_send_channel, args=(ch_name, ch_url, ch_body), daemon=True).start()
             return
 
-        total_channels = len(channels_to_send)
-        completed_count = [0]
-        success_count = [0]
-        ack_sent = [False]
-        ack_lock = threading.Lock()
+        begin_state = journal.begin(journal_key, session.slot_id, msg_id)
+        if begin_state == "fault":
+            log(f"[{session.slot_id}] 通知记录不可写，宿主不认领、不外发")
+            return
 
-        def _send_ack_safe(status: str):
-            if not ack_sent[0] and msg_id:
-                ack_sent[0] = True
-                session.ack_push(msg_id, status)
-                log(f"[{session.slot_id}] 宽带代推已定向回执 ACK -> 【{status}】(msg_id: {msg_id})")
-
-        def _send_channel(ch_name: str, url: str, payload_dict: Dict[str, Any]):
-            payload_bytes = json.dumps(payload_dict, ensure_ascii=False).encode("utf-8")
-            succ = False
-            try:
-                req = urllib.request.Request(url, data=payload_bytes, headers={"Content-Type": "application/json; charset=utf-8"})
-                with urllib.request.urlopen(req, timeout=5) as resp:
-                    if resp.status == 200:
-                        succ = True
-                        log(f"[{session.slot_id}] 宿主宽带代推 [{event_type}] 到 {ch_name} 成功 (HTTP 200)")
-            except Exception as e:
-                log(f"[{session.slot_id}] 宿主宽带代推 [{event_type}] 到 {ch_name} 失败: {e}")
-
-            with ack_lock:
-                completed_count[0] += 1
-                if succ:
-                    success_count[0] += 1
-                    _send_ack_safe("ok")
-                elif completed_count[0] >= total_channels and success_count[0] == 0:
-                    _send_ack_safe("failed")
-
-        for ch_name, ch_url, ch_body in channels_to_send:
-            threading.Thread(target=_send_channel, args=(ch_name, ch_url, ch_body), daemon=True).start()
-
-        # 飞书纯数字气泡
-        if feishu_cfg.get("enable") and feishu_cfg.get("url") and extra_otp:
-            def _send_pure_otp_bubble():
-                time.sleep(0.35)
-                pure_dict = {"msg_type": "text", "content": {"text": str(extra_otp)}}
-                sec2 = (feishu_cfg.get("secret") or "").strip()
-                if sec2:
-                    ts2 = str(int(time.time()))
-                    s2 = f"{ts2}\n{sec2}"
-                    hm2 = hmac.new(s2.encode("utf-8"), digestmod=hashlib.sha256).digest()
-                    pure_dict["timestamp"] = ts2
-                    pure_dict["sign"] = base64.b64encode(hm2).decode("utf-8")
+        def _claim_then_send():
+            # Some board events precede NOTIFY_PUSH registration (cellular-data
+            # changes register it two seconds later). Retry only an explicit
+            # "not yet pending" response, within the board's fallback window.
+            deadline = time.monotonic() + 4.5
+            claim_state = "expired"
+            if hasattr(session, "claim_push"):
+                while time.monotonic() < deadline:
+                    claim_state = session.claim_push(msg_id, timeout=min(1.0, max(0.1, deadline - time.monotonic())))
+                    if claim_state != "expired":
+                        break
+                    time.sleep(0.2)
+            else:
+                claim_state = "claimed"
+            if claim_state != "claimed":
+                if begin_state == "new" and journal:
+                    journal.record(journal_key, state="unknown")
+                log(f"[{session.slot_id}] 通知认领未确认 ({claim_state})，宿主不外发")
+                return
+            if begin_state == "duplicate":
+                log(f"[{session.slot_id}] 重复通知已认领，按历史结果不再次外发")
+                return
+            if journal and not journal.record(journal_key, state="claimed"):
+                return
+            if not channels_to_send:
+                if journal:
+                    journal.record(journal_key, state="skipped")
+                return
+            states = []
+            for ch_name, ch_url, ch_body in channels_to_send:
+                state = "unknown"
                 try:
-                    r = urllib.request.Request(feishu_cfg["url"], data=json.dumps(pure_dict).encode("utf-8"), headers={"Content-Type": "application/json; charset=utf-8"})
-                    with urllib.request.urlopen(r, timeout=5) as resp:
-                        pass
-                except Exception:
-                    pass
-            threading.Thread(target=_send_pure_otp_bubble, daemon=True).start()
+                    req = urllib.request.Request(
+                        ch_url, data=json.dumps(ch_body, ensure_ascii=False).encode("utf-8"),
+                        headers={"Content-Type": "application/json; charset=utf-8"})
+                    with urllib.request.urlopen(req, timeout=5) as resp:
+                        state, _ = _notify_business_result(
+                            ch_name.split("_")[0], resp.status, resp.read(4096))
+                except urllib.error.HTTPError:
+                    state = "rejected"
+                except Exception as exc:
+                    log(f"[{session.slot_id}] 渠道 {ch_name} 结果未知: {type(exc).__name__}")
+                states.append(state)
+                if journal and not journal.record(journal_key, channel=ch_name, result=state):
+                    return
+            final_state = "complete" if all(s in ("accepted", "http_accepted") for s in states) else "attention"
+            if journal:
+                journal.record(journal_key, state=final_state)
+
+        threading.Thread(target=_claim_then_send, daemon=True).start()
 
     def get_cluster_overview(self) -> Dict[str, Any]:
         """聚合集群全景驾驶舱数据 (AIR-22)"""
@@ -2782,6 +3235,9 @@ class GatewayHub:
                 with self.clients_lock:
                     self.client_meta[sock] = {"source": "mcp", "authenticated": False}
 
+        # 任何有效客户端指令均自动续期活跃态 (AIR-64)
+        self.last_active_time = time.time()
+
         log(f"Received client cmd: {cmd_name}, id={req_id}, target_slot={target_slot}, source={source}, is_master={is_internal_master}")
 
         # 方案 D 物理管控黑名单拦截：当 MCP 开关关闭且来源为外部 MCP 时，100% 物理拦截并返回自解释人话提示
@@ -2804,6 +3260,20 @@ class GatewayHub:
             return
 
         # 1. Hub 内部控制指令处理
+        if cmd_name == "touch_activity":
+            sse_c = params.get("active_sse_count") if isinstance(params, dict) else None
+            self.touch_activity(active_sse_count=sse_c)
+            resp = json.dumps({
+                "type": "res",
+                "id": req_id,
+                "ok": True,
+                "active_mode": self.is_in_active_mode(),
+                "active_sse_count": self.active_sse_count
+            }, ensure_ascii=False) + "\n"
+            if sock: sock.sendall(resp.encode("utf-8"))
+            else: self.broadcast_text(resp)
+            return
+
         if cmd_name in ("get_slots", "list_dongles", "get_sessions"):
             summaries = self.session_pool.list_all_summaries()
             # 注入 mcp_action_allowed 字段方便 AI 客户端获悉当前权限状态进行友好引导
@@ -2822,9 +3292,23 @@ class GatewayHub:
             else: self.broadcast_text(resp)
             return
 
+        if cmd_name == "get_notify_results":
+            resp = json.dumps({"type": "res", "id": req_id, "ok": True, "code": 0,
+                               "data": {"items": self.notify_journal.recent(),
+                                        "journal_ok": not self.notify_journal.fault}}) + "\n"
+            if sock: sock.sendall(resp.encode("utf-8"))
+            else: self.broadcast_text(resp)
+            return
+
         if cmd_name == "reload_notify_config":
-            new_cfg = self.reload_notify_config()
-            resp = json.dumps({"type": "response", "cmd": "reload_notify_config", "status": "ok", "config": new_cfg}) + "\n"
+            try:
+                self.reload_notify_config()
+                result = {"type": "res", "id": req_id, "cmd": "reload_notify_config",
+                          "ok": True, "code": 0, "msg": "CONFIG_LOADED"}
+            except (OSError, ValueError):
+                result = {"type": "res", "id": req_id, "cmd": "reload_notify_config",
+                          "ok": False, "code": "config_load_failed", "msg": "CONFIG_LOAD_FAILED"}
+            resp = json.dumps(result) + "\n"
             if sock: sock.sendall(resp.encode("utf-8"))
             else: self.broadcast_text(resp)
             return
@@ -3055,6 +3539,64 @@ class GatewayHub:
 
         # 3. 定向或缺省路由到底层硬件会话（串口让渡与恢复指令豁免活跃连接态检查）
         is_flash_manage_cmd = cmd_name in ("pause_for_flash", "resume_after_flash")
+        is_unassigned = bool(cmd_obj.get("is_unassigned") or params.get("is_unassigned") or (target_slot in (None, "", "new_device")))
+
+        # 针对全新未分配模组 (无 slot) 的专属物理维护租约与 120s TTL
+        if is_flash_manage_cmd and is_unassigned:
+            target_port = cmd_obj.get("port") or params.get("port") or "unassigned_boot"
+            lease_key = f"unassigned_{target_port}"
+            if not hasattr(self, "_unassigned_leases"):
+                self._unassigned_leases = {}
+
+            now = time.time()
+            if cmd_name == "pause_for_flash":
+                existing = self._unassigned_leases.get(lease_key)
+                if existing and (now - existing.get("started_at", 0) < 120.0):
+                    if not (cmd_obj.get("force_retry") or params.get("force_retry")):
+                        err_resp = json.dumps({
+                            "type": "res",
+                            "id": req_id,
+                            "ok": False,
+                            "code": 409,
+                            "msg": "BUSY",
+                            "error": f"全新设备端口 {target_port} 正在烧录中 (租约剩余 {int(120 - (now - existing['started_at']))}s)"
+                        }) + "\n"
+                        if sock: sock.sendall(err_resp.encode("utf-8"))
+                        else: self.broadcast_text(err_resp)
+                        return
+
+                job_id = params.get("job_id") or cmd_obj.get("job_id") or f"job_{int(now*1000)}"
+                self._unassigned_leases[lease_key] = {
+                    "job_id": job_id,
+                    "started_at": now,
+                    "port": target_port,
+                    "phase": "writing"
+                }
+                resp = json.dumps({
+                    "type": "res",
+                    "id": req_id,
+                    "ok": True,
+                    "job_id": job_id,
+                    "device_id": lease_key,
+                    "msg": "UNASSIGNED_DEVICE_PAUSED_FOR_FLASH"
+                }) + "\n"
+                if sock: sock.sendall(resp.encode("utf-8"))
+                else: self.broadcast_text(resp)
+                return
+
+            elif cmd_name == "resume_after_flash":
+                if lease_key in self._unassigned_leases:
+                    del self._unassigned_leases[lease_key]
+                resp = json.dumps({
+                    "type": "res",
+                    "id": req_id,
+                    "ok": True,
+                    "msg": "UNASSIGNED_DEVICE_RESUMED_AFTER_FLASH"
+                }) + "\n"
+                if sock: sock.sendall(resp.encode("utf-8"))
+                else: self.broadcast_text(resp)
+                return
+
         session = self.session_pool.get_session(target_slot, active_only=not is_flash_manage_cmd)
         if not session:
             err_msg = f"目标卡槽 [{target_slot}] 不存在" if target_slot else "无可用 4G 模组会话"

@@ -125,8 +125,8 @@ def cellular_get_status(slot: Optional[str] = None) -> str:
     except Exception as e:
         raise RuntimeError(f"获取网关状态失败: {e}")
 
-    rndis_txt = "🟢 已开启 (USB 虚拟网卡在线)" if stat.get("rndis") else "⚪ 已关闭 (防偷跑流量)"
-    data_txt = "🟢 已开启 (允许板端发HTTP)" if stat.get("cellular_data") else "⚪ 已掐断 (0流量保号，电脑WiFi代推)"
+    rndis_txt = "🟢 已开启 (USB 虚拟网卡在线)" if stat.get("rndis") else "⚪ 已关闭 "
+    data_txt = "🟢 已开启 (移动数据)" if stat.get("cellular_data") else "⚪ 已关闭 (移动数据)"
     uptime_sec = stat.get("uptime_seconds", 0)
     m, s = divmod(uptime_sec, 60)
     h, m = divmod(m, 60)
@@ -162,13 +162,13 @@ def cellular_get_status(slot: Optional[str] = None) -> str:
 def cellular_dial_phone(phone: str, slot: Optional[str] = None, timeout_seconds: int = 15, hangup_on_answer: bool = True) -> str:
     """
     驱动 4G VoLTE 蜂窝语音向目标电话号码发起呼叫振铃（AIR-30）。
-    可用于突发紧急告警（服务器宕机、UPS断电、安防报警）时物理打响主人手机，支持 0 话费超时自动挂断看门狗。
+    可用于突发紧急告警（服务器宕机、UPS断电、安防报警）时物理打响主人手机，支持超时自动挂断。
     
     参数:
       phone: 目标电话号码（如 '13800000000'）
       slot: 可选出站卡槽（如 'slot_2'；缺省自动优选具备 VoLTE 语音协议栈且插卡的模组）
-      timeout_seconds: 最大振铃等待秒数（默认 15 秒，超时自动挂断以防扣费）
-      hangup_on_answer: 对方一旦接听是否立即秒挂断（默认 True，确保双方 0 话费）
+      timeout_seconds: 最大振铃等待秒数（默认 15 秒，超时自动挂断）
+      hangup_on_answer: 对方接听后是否立即挂断（默认 True）
     """
     if not phone:
         raise ValueError("目标电话号码不能为空")
@@ -184,7 +184,7 @@ def cellular_dial_phone(phone: str, slot: Optional[str] = None, timeout_seconds:
         return f"❌ 电话呼叫失败: {err} (卡槽: {res.get('slot') or slot})"
 
     used_slot = res.get("slot") or slot or "slot_2"
-    watchdog_desc = f"{timeout_seconds}秒后自动挂断（防扣费看门狗）"
+    watchdog_desc = f"{timeout_seconds}秒后自动挂断"
     return f"📞 已向 {phone} 发起 VoLTE 电话呼叫！[出站卡槽: {used_slot}] 状态: 对方手机正在振铃，{watchdog_desc}。"
 
 @mcp.tool()
@@ -293,10 +293,10 @@ def cellular_clear_sms_history(slot: Optional[str] = None) -> str:
 def cellular_toggle_rndis(enable: bool, slot: Optional[str] = None) -> str:
     """
     受控开启或关闭 4G 随身上网（USB 虚拟网卡 RNDIS）。
-    出厂默认严格关闭以防偷跑蜂窝流量，开启后宿主机可直接通过 4G 联网。
+    出厂默认关闭，开启后宿主机可直接通过 4G 随身上网。
     
     参数:
-      enable: True 为开启 4G 上网；False 为关闭 4G 上网 (防偷跑)
+      enable: True 为开启 4G 随身上网；False 为关闭 4G 随身上网
       slot: 可选卡槽编号（如 'slot_1', 'slot_2'；缺省针对当前活跃卡槽）
     """
     try:
@@ -305,18 +305,18 @@ def cellular_toggle_rndis(enable: bool, slot: Optional[str] = None) -> str:
     except Exception as e:
         raise RuntimeError(f"随身上网切换失败: {e}")
 
-    action_txt = "开启 4G 随身上网" if enable else "关闭 4G 随身上网 (防偷跑)"
+    action_txt = "开启 4G 随身上网" if enable else "关闭 4G 随身上网"
     target_desc = f"【{slot}】" if slot else ""
     return f"✅ 指令已执行: 正在对{target_desc}模组{action_txt}... 模组已启动 USB 协议栈热复位，预计 5 秒内完成重连。"
 
 @mcp.tool()
 def cellular_toggle_board_data(enable: bool, slot: Optional[str] = None) -> str:
     """
-    受控开启或关闭模组自身的 4G 蜂窝数据通信（0 流量纯信令保号防线）。
-    出厂默认彻底掐断以杜绝扣费，由电脑本地宽带代推飞书；若拔下板子插在充电头上且需要板端自身发 HTTP 推送，可按需开启。
+    受控开启或关闭模组自身的 4G 移动数据通信。
+    出厂默认关闭，由上位机推送通知；若脱机使用需要模组自身发 HTTP 推送，可按需开启。
     
     参数:
-      enable: True 为开启板端 4G 数据；False 为掐断板端数据 (0 流量纯信令保号态)
+      enable: True 为开启移动数据；False 为关闭移动数据
       slot: 可选卡槽编号（如 'slot_1', 'slot_2'；缺省针对当前活跃卡槽）
     """
     try:
@@ -325,7 +325,7 @@ def cellular_toggle_board_data(enable: bool, slot: Optional[str] = None) -> str:
     except Exception as e:
         raise RuntimeError(f"板载蜂窝数据切换失败: {e}")
 
-    action_txt = "开启板载 4G 数据通信 (允许板端发HTTP)" if enable else "掐断板载蜂窝数据 (0流量纯信令保号模式，由电脑宽带代推)"
+    action_txt = "开启移动数据" if enable else "关闭移动数据"
     target_desc = f"【{slot}】" if slot else ""
     return f"✅ 指令已执行: 已对{target_desc}{action_txt}。"
 

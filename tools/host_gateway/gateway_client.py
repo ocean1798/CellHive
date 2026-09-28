@@ -182,7 +182,7 @@ class SmartGatewayClient:
                 print(f"\n\033[32;1m================ 网关已就绪上线 ================\033[0m")
                 print(f"  设备型号: {data.get('bsp')} | 本机号码: {data.get('number')}")
                 print(f"  信号质量: CSQ {data.get('csq')} | 芯片温度: {data.get('temp')} ℃ | 电压: {data.get('vbat')} V")
-                print(f"  随身上网: {'已启用' if data.get('rndis') else '默认关闭 (0流量偷跑)'}")
+                print(f"  随身上网: {'已启用' if data.get('rndis') else '默认关闭'}")
                 print(f"\033[32;1m===============================================\033[0m\nGateway> ", end="", flush=True)
 
             elif event == "sms_rx":
@@ -198,7 +198,7 @@ class SmartGatewayClient:
             elif event == "call_rx":
                 sender = data.get("from")
                 action = data.get("action")
-                print(f"\n\033[31;1m📞 [来电拦截] 号码: {sender} -> 动作: {action} (双方 0 元话费已拒接)\033[0m\nGateway> ", end="", flush=True)
+                print(f"\n\033[31;1m📞 [来电拦截] 号码: {sender} -> 动作: {action} (已自动拒接)\033[0m\nGateway> ", end="", flush=True)
 
             elif event == "status":
                 csq = data.get("csq")
@@ -227,8 +227,8 @@ class SmartGatewayClient:
             data = obj.get("data", {})
 
             if msg == "STATUS_OK":
-                rndis_desc = "\033[32;1m🟢 4G随身上网已开启\033[0m" if data.get('rndis') else "\033[90m⚪ 默认关闭 (0流量偷跑)\033[0m"
-                data_desc = "\033[32;1m🟢 已开启 (允许板端发HTTP)\033[0m" if data.get('cellular_data') else "\033[33;1m⚪ 已掐断 (0流量保号，电脑宽带代推)\033[0m"
+                rndis_desc = "\033[32;1m🟢 4G随身上网已开启\033[0m" if data.get('rndis') else "\033[90m⚪ 默认关闭 \033[0m"
+                data_desc = "\033[32;1m🟢 已开启 (允许板端发HTTP)\033[0m" if data.get('cellular_data') else "\033[33;1m⚪ 已关闭 (移动数据)\033[0m"
                 uptime_sec = data.get('uptime_seconds', 0)
                 m, s = divmod(uptime_sec, 60)
                 h, m = divmod(m, 60)
@@ -301,7 +301,7 @@ class SmartGatewayClient:
 
             elif msg == "CELLULAR_DATA_UPDATED":
                 st = data.get("cellular_data")
-                st_str = "\033[32;1m开启板载数据 (走4G发HTTP)\033[0m" if st else "\033[33;1m掐断板载数据 (0流量保号模式，电脑宽带代推)\033[0m"
+                st_str = "\033[32;1m开启板载数据 (走4G发HTTP)\033[0m" if st else "\033[33;1m关闭移动数据\033[0m"
                 print(f"\n\033[32;1m[+] 板载数据通信切换成功: {st_str}\033[0m\nGateway> ", end="", flush=True)
 
             elif msg == "QUEUED_TO_BASE_STATION":
@@ -320,9 +320,9 @@ def print_menu():
   \033[32;1m[1]\033[0m status                   : 实时硬件状态看板 (信号/温度/电压/黑匣子/运行时间)
   \033[32;1m[2]\033[0m history [数量]           : 查阅板载 128KB LittleFS 脱机黑匣子 (直接回车默认 20 条)
   \033[32;1m[3]\033[0m rndis on                 : 一键开启 4G 随身上网 (激活虚拟网卡)
-  \033[32;1m[4]\033[0m rndis off                : 一键关闭 4G 随身上网 (默认关闭，0流量防偷跑)
+  \033[32;1m[4]\033[0m rndis off                : 一键关闭 4G 随身上网
   \033[32;1m[5]\033[0m data on                  : 开启板载 4G 蜂窝数据 (允许板端发HTTP)
-  \033[32;1m[6]\033[0m data off                 : 掐断板载蜂窝数据 (默认推荐，0流量保号，电脑代推飞书)
+  \033[32;1m[6]\033[0m data off                 : 关闭移动数据
   \033[32;1m[7]\033[0m uptime                   : 查看连续运行时间与下次自动重启倒计时
   \033[32;1m[8]\033[0m send <号码> <内容>       : 驱动 4G 射频代发短信 (如输入 8 弹出引导)
   \033[32;1m[9]\033[0m reboot                   : 立即重启设备
