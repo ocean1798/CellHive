@@ -33,9 +33,9 @@ def _public_gateway_config(config):
     return public
 
 # 引入 luadb_packer 打包引擎
-HOST_GATEWAY_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "host_gateway"))
-if HOST_GATEWAY_DIR not in sys.path:
-    sys.path.insert(0, HOST_GATEWAY_DIR)
+_CORE_DIR = os.path.dirname(os.path.abspath(__file__))
+if _CORE_DIR not in sys.path:
+    sys.path.insert(0, _CORE_DIR)
 
 try:
     import luadb_packer
@@ -77,24 +77,28 @@ if sys.stderr is None:
     sys.stderr = _SafeStream()
 
 
-def get_bundle_dir() -> str:
-    """获取静态资源解压/打包根目录：PyInstaller 模式下读取 _MEIPASS"""
-    if getattr(sys, 'frozen', False):
-        return getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
-    return os.path.dirname(os.path.abspath(__file__))
+try:
+    from runtime import get_web_dir, get_data_dir, get_config_dir
+except ImportError:
+    try:
+        from core.runtime import get_web_dir, get_data_dir, get_config_dir
+    except ImportError:
+        def get_web_dir() -> str:
+            if getattr(sys, 'frozen', False):
+                return getattr(sys, '_MEIPASS', os.path.dirname(sys.executable))
+            return os.path.join(os.path.dirname(os.path.abspath(__file__)), 'web')
+        def get_data_dir() -> str:
+            return os.path.dirname(os.path.abspath(__file__))
+        def get_config_dir() -> str:
+            return os.path.dirname(os.path.abspath(__file__))
 
-def get_config_dir() -> str:
-    """获取配置持久化目录：PyInstaller 模式下写入 exe 所在目录"""
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+BUNDLE_DIR = os.path.dirname(get_web_dir())
+DATA_DIR = get_data_dir()
+CONFIG_DIR = get_config_dir()
 
-BUNDLE_DIR = get_bundle_dir()
-DATA_DIR = get_config_dir()
-
-WEB_DIR = os.path.join(BUNDLE_DIR, "web")
-INDEX_HTML_PATH = os.path.join(WEB_DIR, "index.html")
-GATEWAY_CONFIG_PATH = os.path.join(DATA_DIR, "gateway_config.json")
+WEB_DIR = get_web_dir()
+INDEX_HTML_PATH = os.path.join(WEB_DIR, 'index.html')
+GATEWAY_CONFIG_PATH = os.path.join(CONFIG_DIR, 'gateway_config.json')
 
 try:
     import gateway_runtime as runtime
@@ -144,7 +148,10 @@ def set_autostart_status(enable: bool) -> bool:
                     pythonw = os.path.join(os.path.dirname(python_exe), "pythonw.exe")
                     if os.path.exists(pythonw):
                         python_exe = pythonw
-                    script_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "gateway_app.py"))
+                    candidate_app = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "platforms", "windows", "gateway_app.py"))
+                    if not os.path.exists(candidate_app):
+                        candidate_app = os.path.abspath(os.path.join(os.path.dirname(__file__), "gateway_app.py"))
+                    script_path = candidate_app
                     cmd = f'"{python_exe}" "{script_path}" --no-browser'
                 winreg.SetValueEx(key, RUN_APP_NAME, 0, winreg.REG_SZ, cmd)
             else:
@@ -380,7 +387,14 @@ def get_effective_fota_bundle_dir(bundle_dir: Optional[str] = None) -> Optional[
     if getattr(sys, "frozen", False):
         meipass = getattr(sys, "_MEIPASS", None)
         return os.path.join(meipass, "fota_bundle") if meipass else None
-    return os.path.join(HOST_GATEWAY_DIR, "fota_bundle")
+    try:
+        from runtime import get_data_dir
+        candidate = os.path.join(get_data_dir(), "fota_bundle")
+        if os.path.exists(candidate):
+            return candidate
+    except Exception:
+        pass
+    return os.path.join(_CORE_DIR, "fota_bundle")
 
 
 def evaluate_upgrade_gate(slot_info: Optional[Dict[str, Any]], bundle_dir: Optional[str] = None) -> Dict[str, Any]:
@@ -1514,6 +1528,8 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
+        self.send_header("X-Frame-Options", "ALLOWALL")
+        self.send_header("Content-Security-Policy", "frame-ancestors 'self' *;")
 
     @staticmethod
     def _is_loopback_client(client_ip: Optional[str]) -> bool:
@@ -1531,7 +1547,8 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
 
     def _check_client_security(self) -> bool:
         """核验客户端访问权限：内聚在 Web 服务层，守死 do_GET 与 do_POST 双入口"""
-        client_ip = self.client_address[0] if (self.client_address and len(self.client_address) > 0) else None
+        client_addr = getattr(self, "client_address", None)
+        client_ip = client_addr[0] if (client_addr and len(client_addr) > 0) else "127.0.0.1"
         if not client_ip:
             self._send_forbidden_lan_response()
             return False
@@ -1988,7 +2005,8 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
             except (ValueError, TypeError):
                 daily_reboot_hour_val = 4
 
-            client_ip = self.client_address[0] if (self.client_address and len(self.client_address) > 0) else None
+            client_addr = getattr(self, "client_address", None)
+            client_ip = client_addr[0] if (client_addr and len(client_addr) > 0) else "127.0.0.1"
             is_client_local = self._is_loopback_client(client_ip)
             lan_access_enabled = bool(getattr(self.server, "lan_access_enabled", False))
 
@@ -2476,12 +2494,12 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
                     return
                 time.sleep(0.3)
 
-                def _cb(pct, msg):
+                def _cb(pct, msg, stage="flashing"):
                     self.backend.broadcast_sse("cli_flash_progress", {
                         "slot": slot_id or "new_device",
                         "percent": pct,
                         "message": msg,
-                        "stage": "flashing"
+                        "stage": stage
                     })
 
                 try:
@@ -2683,7 +2701,8 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
                     sec_system[k] = bool(body[k])
 
             # 局域网访问权限控制 (AIR-62：权限安全红线，仅限本机客户端修改，外部非本机请求忽略篡改)
-            client_ip = self.client_address[0] if (self.client_address and len(self.client_address) > 0) else None
+            client_addr = getattr(self, "client_address", None)
+            client_ip = client_addr[0] if (client_addr and len(client_addr) > 0) else "127.0.0.1"
             is_client_local = self._is_loopback_client(client_ip)
             if "lan_access" in body and is_client_local:
                 new_lan_val = bool(body["lan_access"])
@@ -2752,7 +2771,8 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
 
     def handle_sse_stream(self):
         """处理 SSE 持续事件推送流 (含局域网开关关闭瞬间的主动热逐出看门狗)"""
-        client_ip = self.client_address[0] if (self.client_address and len(self.client_address) > 0) else None
+        client_addr = getattr(self, "client_address", None)
+        client_ip = client_addr[0] if (client_addr and len(client_addr) > 0) else "127.0.0.1"
         is_local = self._is_loopback_client(client_ip)
 
         self.send_response(200)
@@ -2795,11 +2815,11 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
                     if hasattr(self.backend, "touch_activity"):
                         self.backend.touch_activity(active_sse_count=len(self.backend.sse_listeners), force=True)
 
-                # 存量连接安全看门狗：非本机客户端在局域网开关关闭时立即主动掐断断连
+                # 存量连接安全看门狗：非本机客户端在局域网开关关闭时立即主动断开断连
                 if not is_local:
                     lan_enabled = getattr(self.server, "lan_access_enabled", False)
                     if not lan_enabled:
-                        _log(f"局域网访问已在控制台关闭，主动掐断外部客户端 {client_ip} 的 SSE 实时流连接")
+                        _log(f"局域网访问已在控制台关闭，主动断开外部客户端 {client_ip} 的 SSE 实时流连接")
                         try:
                             self.wfile.write(b"event: close\ndata: {\"reason\":\"lan_access_disabled\"}\n\n")
                             self.wfile.flush()

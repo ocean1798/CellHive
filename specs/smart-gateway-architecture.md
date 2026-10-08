@@ -332,6 +332,8 @@ tools/
 
 ### 10.3 单卡原生应用受管模式（2026-09-14）
 
+本节保留当时的单卡阶段事实。当前公共源码与受管外壳已按第40.3节接通；后续产包使用该节链接的操作说明v2，不再使用本节旧tools入口。
+
 单卡 `tools/host_gateway` 继续作为唯一业务源，新增 Linux x86_64 / CPython 3.12 的 `managed-python-web-v1` 运行入口；原 Web、Hub、API/SSE 在硅基涌现现应用容器中运行。上文固定端口与下节动态扫描描述独立运行方式，不能套用于受管模式。受管入口由宿主注入 loopback 端口、同源 basePath、私有数据/缓存/日志目录及运行身份，不要求用户另配服务地址。
 
 `gateway_managed.py` 监督同一运行中的 Web/Hub；初始化只进入 prepared，不接板、采集、通知或业务写入。收到匹配身份的 activate 后才工作。受管模式严格使用宿主唯一获准设备并复验稳定身份，断开只重连同身份，不扫描接管其他板；宿主确认完整旧组退出后才释放设备。`network.outbound` 未授时不执行受控网络通知。Python 同 UID 与同源页面不是恶意代码隔离。
@@ -1105,9 +1107,73 @@ AIR-40 按用户决定固定经典界面，移除主题切换并忽略旧 island
 3. **Windows 路径反斜杠防破损管线**：
    后端 `gateway_web.py` 在返回配置时，自动推导当前免安装 EXE 或 Python 脚本所在的物理真实绝对路径，并强制格式化为正斜杠（`/`），彻底避免 Windows 反斜杠转义破损引发的 MCP 服务注册失败。
 
+---
+
+## 35. 原生单实例桌面客户端与托盘生命周期架构 (AIR-69)
+
+### 35.1 架构演进与技术定论
+上位机彻底推翻原先“后台常驻 Web 服务 + 外部命令行调用 Edge 浏览器 `--app` 伪装窗口”的脆弱架构，确立**“原生单实例 Microsoft Edge WebView2 宿主容器（通过 pywebview）+ 独立线程系统托盘（pystray）”**的工业级桌面架构：
+1. **彻底根除多开**：全局持有唯一窗口实例，二次启动或快捷方式双击通过 `AttachThreadInput` 穿透 Windows 前台焦点锁，瞬间前置置顶已有原生窗口，杜绝弹出多个孤儿窗口；
+2. **关窗缩入托盘 (Hide to Tray)**：常驻模式下拦截 `on_closing` 信号，调用 `window.hide()` 平滑收敛至托盘，保证后台串口轮询与短信转发持续无感运行；调试无托盘模式（`--no-tray`）下允许真实退出；
+3. **系统关机安全放行**：挂接系统 `SessionEnding` 会话终结事件，遇 Windows 关机/重启/注销信号坚决放行退出，绝对严禁拦截，杜绝沦为阻止关机的流氓软件；
+4. **低功耗休眠联动 (AIR-64)**：窗口缩入托盘时，宿主层调用 `CoreWebView2.TrySuspendAsync()` 挂起渲染管线与 JS 引擎；前端页面监听 W3C 标准 `visibilitychange` 事件自动暂停 4 秒高频轮询，切回前台立即触发自愈心跳与重连，守住静默状态 CPU < 0.1% 基线；
+5. **DWM 沉浸式暗黑与首屏白闪根治**：调用 Win32 DWM API 启用 `DWMWA_USE_IMMERSIVE_DARK_MODE` 沉浸式深色标题栏，创建时指定 `background_color="#0f172a"` 彻底消除白光弹；
+6. **资源治理与安全回收**：WebView2 用户数据目录规范锁定于 `%LocalAppData%/CellHive/webview_data`（Roam 禁令），硬限额 32MB 磁盘缓存；退出流程严格优雅拆卸，由 `sys.exit(0)` 正常退出，确保 PyInstaller 临时解压目录安全回收。
 
 
 
 
 
 
+
+
+
+
+---
+
+---
+
+## 40. 业务内核单源收敛与多端分发分治规范 (AIR-70)
+
+### 40.1 双工程镜像架构弊端与单源收敛 (Core + Shells)
+历史版本中 `tools/host_gateway` 与 `tools/cluster_gateway` 双目录并行维护，导致业务逻辑与前端界面每次修改都需要手动双向镜像同步，极易滋生不一致性缺陷。AIR-70 彻底消除双工程镜像负担，确立 **业务内核单源收敛（Core） + 多端分发分治（Platforms/Shells）** 现代软件架构：
+1. **单一事实源内核 (`core/`)**：
+   - 跨平台守护与中枢：`core/gateway_hub.py`
+   - 跨平台 Web 控制台与 REST API：`core/gateway_web.py`
+   - 分舱存储与权威时序：`core/storage_manager.py`
+   - 物理卡槽动态路由与集群分发：`core/cluster_router.py`
+   - 多卡健康看门狗：`core/cluster_health.py`
+   - 跨平台固件升级与烧录管线：`core/firmware_flasher.py`、`core/luadb_packer.py`
+   - 唯一跨端响应式控制台：`core/web/index.html`、`core/web/favicon.ico`
+   - 跨平台运行时与确定性寻址适配：`core/runtime.py`（提供数据、日志、缓存、Web 根目录自适应探测及 `directory(kind)` 向下兼容垫片）
+2. **多端分发外壳 (`platforms/`) 物理隔离**：
+   - Windows 桌面独立端 (`platforms/windows/`)：包含原生托盘与生命周期外壳 `gateway_app.py`、打包流水线 `build_exe.py`、图标与规格定义。
+   - 飞牛私有云 NAS 套件 (`platforms/feiniu_fnos/`)：包含官方原生套件元数据 `manifest`、权限配置 `config/privilege`、资源配置 `config/resource`、入口 `cmd/main`、生命周期回调 `cmd/*_callback`、向导 `wizard/`、离线 vendored `pyserial`、构建脚本 `build_fpk.py`。
+   - 硅基涌现应用平台 (`platforms/silicon_emergence/`)：受管入口为 `gateway_managed.py`，权限/路径适配为 `gateway_runtime.py`，设备通道为 `gateway_device_channel.py`；构建器消费core，不复制Hub/Web/存储业务。原 `gateway_bridge_silicon.py` 保留其原用途，不是本次插件的启动入口。
+3. **向下兼容过渡与安全收敛**：
+   - 彻底安全移除历史冗余 `tools/cluster_gateway`（移入系统回收站）。
+   - 保留 `tools/host_gateway` 作为纯向下兼容垫片，软链接或镜像代理至 `core/`，杜绝破坏历史脚本与自动化流水线。
+
+### 40.2 飞牛私有云 (fnOS) 官方原生套件规范
+针对飞牛 EVO4 NAS 等家庭私有云 7×24 小时开箱即用需求，严格遵循飞牛官方《应用中心套件开发规范》：
+1. **零外部网络开箱即用 (Vendored pyserial)**：
+   - fnOS 套件安装与运行严禁在线执行 `pip install`。
+   - 将纯 Python 实现的 `pyserial` 源码完整内嵌于 `platforms/feiniu_fnos/app/vendor/serial`，通过 `cmd/main` 运行时动态前置 `PYTHONPATH` 实现绝对离线开箱即用。
+2. **路由与资费安全保障 (NM_UNMANAGED="1")**：
+   - 4G 模组插入 NAS 时，严禁 Linux NetworkManager 自动将其识别为默认宽带路由，防止多卡保号卡流量偷跑或冲撞家庭千兆有线宽带。
+   - 套件安装回调 (`cmd/install_callback`) 自动向宿主机 `/etc/udev/rules.d/99-cellhive-dongle.rules` 写入 `ENV{NM_UNMANAGED}="1"` 与 `ENV{ID_MM_DEVICE_IGNORE}="1"` 规则，并重载 udev。
+3. **守护进程级联管理与原子文件锁 (PGID & flock)**：
+   - 套件后台守护进程由独立作业控制组（PGID）管理，严禁遗留孤儿进程霸占串口或 Web 端口。
+   - 启动脚本 `cmd/main` 使用 `flock` 原子排他锁保障服务单实例运行；终止进程组时严格设立 `PGID > 1` 安全防线，避免意外波及 PID 1 操作系统根进程。
+4. **数据资产安全保留选项**：
+   - 卸载向导 (`wizard/uninstall`) 默认开启“保留历史短信记录与配置数据”复选框；
+   - 仅在用户显式取消勾选时，卸载回调才清理 `$TRIM_PKGVAR` 数据目录，保障用户数字资产绝对安全。
+
+
+### 40.3 当前受管接入与共同源码（AIR-46，2026-10-08）
+
+公共业务仍只维护core；Windows壳默认Serial和完整维护功能，硅基壳注入受管transport、显式data/config/cache/log目录及能力/生命周期。core不反向导入平台壳。`initialize`只进入prepared，HTTP在所有handler之前统一鉴权和能力判断；`activate`显式初始化归档后启动Hub/Web。关闭未确认保留会话待重试，未知写入不自动重放；数据按卡分舱，未知归属不借首卡，旧history只读，损坏墓碑拒绝覆盖。
+
+`core/runtime.py`提供单一BUSINESS_VERSION及路径助手。Windows入口把data/config设到同一个LOCALAPPDATA/CellHive/data目录；本轮未搬移或合并旧桌面目录，也没有切换运行EXE。两处已有数据的接续验证与Windows完整依赖/维护资产来源仍是后续Windows交付条件。受管模式只用宿主显式目录，不回退到源码、TRIM或用户桌面目录。
+
+插件与Windows构建器消费相同8项core集合，来源记录区分实际字节SHA、现有Git过滤后的保存关系以及独立依赖/资产。插件构建已形成1.4.0候选；它不包含Windows维护资源。两端完整制品、UAT与真板结果分别判断，不由源码接受推出。当前构建和更新入口见[操作说明v2](../changes/0046-适配-上位机受管插件更新/managed-plugin-update-runbook-v2.md)，实际接受范围见该Change的tasks及复审记录。

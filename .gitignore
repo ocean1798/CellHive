@@ -14,6 +14,8 @@ gateway_config.json
 !**/gateway_config.example.json
 gateway_history.json
 **/gateway_history.json
+notify_results.json
+**/notify_results.json
 .hub_session_token
 **/.hub_session_token
 cards/
@@ -38,6 +40,10 @@ tools/host_gateway/build/
 tools/host_gateway/dist/
 tools/cluster_gateway/build/
 tools/cluster_gateway/dist/
+platforms/windows/build/
+platforms/windows/dist/
+platforms/feiniu_fnos/dist/
+platforms/feiniu_fnos/build_staging/
 
 # Publishing and local tool configs
 tools/.github_remote.json
@@ -46,6 +52,8 @@ output/
 **/output/
 
 # OS / Python temporary
+.pytest_cache/
+**/.pytest_cache/
 __pycache__/
 **/__pycache__/
 *.pyc

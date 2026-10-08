@@ -125,9 +125,7 @@ local function trigger_gateway_ready()
     gateway_state.boot_notified = true
     local report_text = build_status_report()
     local raw_num = mobile and mobile.number and mobile.number() or nil
-    local notify_id = serial_comm.new_event_id("notify")
     serial_comm.publish("gateway_ready", {
-        id = notify_id,
         bsp = model.bsp() or "未知",
         model = model.bsp() or "未知",
         imei = model.imei(),
@@ -153,7 +151,7 @@ local function trigger_gateway_ready()
         },
         report_text = report_text
     })
-    sys.publish("NOTIFY_PUSH", "boot", "", report_text, "", notify_id)
+    sys.publish("NOTIFY_PUSH", "boot", "", report_text)
     if fskv and fskv.get("fota_just_updated") then
         local updated_ver = fskv.get("fota_just_updated")
         fskv.del("fota_just_updated")
@@ -307,9 +305,7 @@ sys.subscribe("SERIAL_CMD", function(cmd_packet)
         if changed then
             local report_text = build_status_report()
             local raw_num = mobile and mobile.number and mobile.number() or nil
-            local notify_id = serial_comm.new_event_id("notify")
             serial_comm.publish("state_change", {
-                id = notify_id,
                 bsp = model.bsp(),
                 model = model.bsp(),
                 imei = model.imei(),
@@ -330,10 +326,10 @@ sys.subscribe("SERIAL_CMD", function(cmd_packet)
             })
             if enable then
                 sys.timerStart(function()
-                    sys.publish("NOTIFY_PUSH", "state_change", "", report_text, "", notify_id)
+                    sys.publish("NOTIFY_PUSH", "state_change", "", report_text)
                 end, 2000)
             else
-                sys.publish("NOTIFY_PUSH", "state_change", "", report_text, "", notify_id)
+                sys.publish("NOTIFY_PUSH", "state_change", "", report_text)
             end
         end
     elseif cmd_packet.cmd == "set_rndis" then
@@ -345,9 +341,7 @@ sys.subscribe("SERIAL_CMD", function(cmd_packet)
         if changed then
             local report_text = build_status_report()
             local raw_num = mobile and mobile.number and mobile.number() or nil
-            local notify_id = serial_comm.new_event_id("notify")
             serial_comm.publish("state_change", {
-                id = notify_id,
                 bsp = model.bsp(),
                 model = model.bsp(),
                 imei = model.imei(),
@@ -366,7 +360,7 @@ sys.subscribe("SERIAL_CMD", function(cmd_packet)
                 change_type = "rndis",
                 report_text = report_text
             })
-            sys.publish("NOTIFY_PUSH", "state_change", "", report_text, "", notify_id)
+            sys.publish("NOTIFY_PUSH", "state_change", "", report_text)
         end
         serial_comm.send_response(cmd_packet.id, 0, "RNDIS_SWITCHING", {
             enable = enable,

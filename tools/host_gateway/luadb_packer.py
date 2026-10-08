@@ -32,7 +32,15 @@ if sys.platform == "win32" and hasattr(sys.stdout, "reconfigure"):
         pass
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, "..", ".."))
+def _find_project_root():
+    p = os.path.dirname(os.path.abspath(__file__))
+    while p and os.path.dirname(p) != p:
+        if os.path.exists(os.path.join(p, "board.md")):
+            return p
+        p = os.path.dirname(p)
+    return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+PROJECT_ROOT = _find_project_root()
 
 def get_bundle_resource_dir(sub_name: str, fallback_path: str) -> str:
     """在 PyInstaller 打包环境下只能使用 _MEIPASS 相应路径，缺失不得回退开发目录；非 frozen 环境使用工程路径"""
@@ -929,7 +937,7 @@ def get_fota_bundle_dir(custom_path: Optional[str] = None) -> Optional[str]:
     """
     获取统一 fota_bundle 逻辑资源位置。
     frozen 模式下读取 _MEIPASS/fota_bundle，缺包不得回退源码目录或硬编码版本；
-    非 frozen 模式在 tools/host_gateway/fota_bundle 查找；
+    非 frozen 模式在 core/fota_bundle 查找；
     若提供 custom_path 则以其为准。
     若目标目录不存在，返回 None。
     """

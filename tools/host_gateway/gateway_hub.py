@@ -54,14 +54,24 @@ if sys.stdout is None:
 if sys.stderr is None:
     sys.stderr = _SafeStream()
 
-def get_config_dir() -> str:
-    """获取配置持久化目录：若在 PyInstaller 冻结环境，取 exe 所在目录；否则取源码目录"""
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    return os.path.dirname(os.path.abspath(__file__))
+try:
+    from runtime import get_web_dir, get_data_dir, get_config_dir
+except ImportError:
+    try:
+        from core.runtime import get_web_dir, get_data_dir, get_config_dir
+    except ImportError:
+        def get_web_dir() -> str:
+            if getattr(sys, "frozen", False):
+                return getattr(sys, "_MEIPASS", os.path.dirname(sys.executable))
+            return os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
+        def get_data_dir() -> str:
+            return os.path.dirname(os.path.abspath(__file__))
+        def get_config_dir() -> str:
+            return os.path.dirname(os.path.abspath(__file__))
 
-GATEWAY_CONFIG_PATH = os.path.join(get_config_dir(), "gateway_config.json")
-DATA_DIR = get_config_dir()
+DATA_DIR = get_data_dir()
+CONFIG_DIR = get_config_dir()
+GATEWAY_CONFIG_PATH = os.path.join(CONFIG_DIR, "gateway_config.json")
 
 def _redact_log_text(msg: Any) -> str:
     """脱敏日志中的手机号、验证码与密钥"""
@@ -83,7 +93,7 @@ def log(msg: str):
         except Exception:
             pass
     try:
-        log_p = os.path.join(os.path.dirname(os.path.abspath(__file__)), "hub_debug.log")
+        log_p = os.path.join(DATA_DIR, "hub_debug.log")
         with open(log_p, "a", encoding="utf-8") as f:
             f.write(formatted)
     except Exception:
@@ -225,8 +235,27 @@ def _escape_powershell_str(val: str) -> str:
     return cleaned
 
 
+_notification_sinks = []
+
+def register_notification_sink(fn):
+    """注册跨平台通知观察者 (Windows Toast / fnOS 系统消息等)"""
+    if fn not in _notification_sinks:
+        _notification_sinks.append(fn)
+
+def dispatch_notification(title: str, body: str, privacy: bool = False):
+    """向所有注册的观察者分发通知"""
+    for sink in _notification_sinks:
+        try:
+            sink(title, body, privacy=privacy)
+        except TypeError:
+            try:
+                sink(title, body)
+            except Exception:
+                pass
+        except Exception:
+            pass
+
 def show_windows_toast(title: str, message: str, privacy: bool = False):
-    """通过 PowerShell 异步向 Windows 屏幕右下角弹出一个原生系统 Toast 通知"""
     if sys.platform != "win32":
         return
     if privacy:
@@ -258,6 +287,9 @@ $toast = [Windows.UI.Notifications.ToastNotification]::new($toastXml)
         except Exception:
             pass
     threading.Thread(target=_run, daemon=True).start()
+
+if sys.platform == "win32":
+    register_notification_sink(show_windows_toast)
 
 def find_cellular_vuart_port(ports_list: Optional[List[Any]] = None) -> Optional[str]:
     """
@@ -296,7 +328,10 @@ def scan_all_cellular_ports(ports_list: Optional[List[Any]] = None) -> List[Dict
 
             if "19D1:0001" in hwid or ("19D1" in vid and ("0001" in pid or "1" in pid)):
                 # 必须满足用户通信口判定：location 以 x.6 结尾或包含 :X.6 或 MI_06
-                if loc.endswith("x.6") or ":X.6" in loc.upper() or "MI_06" in hwid or "X.6" in hwid:
+                if (loc.endswith("x.6") or ":X.6" in loc.upper() or "MI_06" in hwid or "X.6" in hwid or
+                    loc.endswith(":1.6") or loc.endswith(".6") or ":1.6" in loc or
+                    getattr(p, "interface", "") in ("06", "MI_06", "VUART_0")):
+
                     results.append({
                         "port": p.device,
                         "desc": p.description,
@@ -2409,16 +2444,16 @@ class GatewayHub:
                         log(f"⚡ [CLIPBOARD] 验证码 {slot_label} [{code}] 已自动存入 Windows 剪贴板")
                         if toast_enabled:
                             if privacy_on:
-                                show_windows_toast("数字蜂巢 · 验证码", "⚡ 收到登录验证码 (已存入剪贴板，直接按 Ctrl+V 粘贴)", privacy=True)
+                                dispatch_notification("数字蜂巢 · 验证码", "⚡ 收到登录验证码 (已存入剪贴板，直接按 Ctrl+V 粘贴)", privacy=True)
                             else:
-                                show_windows_toast("数字蜂巢 · 验证码", f"⚡ {slot_label} 捕获验证码：{code} (已存入剪贴板，直接按 Ctrl+V 粘贴)")
+                                dispatch_notification("数字蜂巢 · 验证码", f"⚡ {slot_label} 捕获验证码：{code} (已存入剪贴板，直接按 Ctrl+V 粘贴)")
                 else:
                     log(f"⚡ [OTP] 捕获验证码 {slot_label} [{code}]")
                     if toast_enabled:
                         if privacy_on:
-                            show_windows_toast("数字蜂巢 · 验证码", "⚡ 收到登录验证码 (点击进入控制台查看)", privacy=True)
+                            dispatch_notification("数字蜂巢 · 验证码", "⚡ 收到登录验证码 (点击进入控制台查看)", privacy=True)
                         else:
-                            show_windows_toast("数字蜂巢 · 验证码", f"⚡ {slot_label} 捕获验证码：{code}")
+                            dispatch_notification("数字蜂巢 · 验证码", f"⚡ {slot_label} 捕获验证码：{code}")
             else:
                 # 纯文本非验证码普通短信弹窗
                 sys_cfg = self.notify_config.get("system", {}) if isinstance(self.notify_config, dict) else {}
@@ -2427,7 +2462,7 @@ class GatewayHub:
                     sender = data.get("from") or "未知发件人"
                     content_snippet = (data.get("content") or "").replace("\n", " ")[:40]
                     privacy_on = bool(sys_cfg.get("privacy_mode", False))
-                    show_windows_toast(f"📩 {ident['display_tag']} 收到新短信", f"发件人: {sender}\n{content_snippet}", privacy=privacy_on)
+                    dispatch_notification(f"📩 {ident['display_tag']} 收到新短信", f"发件人: {sender}\n{content_snippet}", privacy=privacy_on)
 
         # 2. 触发宿主宽带代推
         if frame_type == "event" and evt in ("sms_rx", "call_rx", "gateway_ready", "state_change"):

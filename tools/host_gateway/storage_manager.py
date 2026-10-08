@@ -36,6 +36,35 @@ OPERATOR_PREFIXES = [
     ("898612", "中国广电"),
 ]
 
+# 常见国际与漫游运营商 ICCID 前缀推导字典 (ITU-T E.118 / AIR-67)
+OVERSEAS_OPERATOR_PREFIXES = [
+    ("89852", "香港漫游"),
+    ("89853", "澳门漫游"),
+    ("89886", "台湾漫游"),
+    ("8944", "英国漫游"),
+    ("8901", "美国漫游"),
+    ("891", "加拿大漫游"),
+    ("8981", "日本漫游"),
+    ("8982", "韩国漫游"),
+    ("8965", "新加坡漫游"),
+    ("8960", "马来西亚漫游"),
+    ("8966", "泰国漫游"),
+    ("8984", "越南漫游"),
+    ("8963", "菲律宾漫游"),
+    ("8962", "印尼漫游"),
+    ("8961", "澳大利亚漫游"),
+    ("8964", "新西兰漫游"),
+    ("8949", "德国漫游"),
+    ("8933", "法国漫游"),
+    ("8939", "意大利漫游"),
+    ("8934", "西班牙漫游"),
+    ("8931", "荷兰漫游"),
+    ("8941", "瑞士漫游"),
+    ("8946", "瑞典漫游"),
+    ("897", "俄罗斯漫游"),
+    ("89971", "阿联酋漫游"),
+]
+
 # 运营商号段规则 (ITU-T / 中国工信部)
 UNICOM_PREFIXES = ("130", "131", "132", "145", "155", "156", "166", "175", "176", "185", "186", "196")
 MOBILE_PREFIXES = ("134", "135", "136", "137", "138", "139", "147", "150", "151", "152", "157", "158", "159", "172", "178", "182", "183", "184", "187", "188", "195", "197", "198")
@@ -65,13 +94,22 @@ def derive_operator_and_badge(iccid: Optional[str] = None,
     4. 正文首部签名强正则匹配 (^【中国联通】等) 兜底 (防伪基站跨网误判)
     """
     operator = "未知运营商"
-    clean_iccid = str(iccid or "").strip()
+    clean_iccid = re.sub(r"[Ff]$", "", str(iccid or "").strip())
 
     # 1. ICCID 优先
     for prefix, name in OPERATOR_PREFIXES:
         if clean_iccid.startswith(prefix):
             operator = name
             break
+
+    # 1.1 国际漫游 ICCID 推导 (AIR-67)
+    if operator == "未知运营商":
+        for prefix, name in OVERSEAS_OPERATOR_PREFIXES:
+            if clean_iccid.startswith(prefix):
+                operator = name
+                break
+        if operator == "未知运营商" and clean_iccid.startswith("89") and not clean_iccid.startswith("8986"):
+            operator = "国际漫游"
 
     # 2. 本机号段二级推导
     clean_phone = re.sub(r"\D", "", str(my_phone or ""))

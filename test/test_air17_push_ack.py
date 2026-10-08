@@ -12,7 +12,7 @@ from unittest.mock import MagicMock, patch
 
 project_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 host_hub_path = os.path.join(project_dir, "tools", "host_gateway", "gateway_hub.py")
-cluster_hub_path = os.path.join(project_dir, "tools", "cluster_gateway", "gateway_hub.py")
+cluster_hub_path = os.path.join(project_dir, "core", "gateway_hub.py")
 
 def load_module_from_path(name: str, path: str):
     dir_name = os.path.dirname(os.path.abspath(path))
@@ -86,14 +86,24 @@ class TestAir17PushAckAndDegradation(unittest.TestCase):
             }
         }
         sent_lines = []
-        session.send_line = lambda line: sent_lines.append(line)
+        def fake_send_line(line):
+            sent_lines.append(line)
+            try:
+                pkt = json.loads(line)
+                if pkt.get("cmd") == "notify_ack":
+                    session.on_claim_response({"type": "res", "id": pkt.get("id"), "code": 0, "msg": "NOTIFY_CLAIMED", "data": {"id": pkt.get("data", {}).get("id"), "status": "claimed"}})
+            except Exception:
+                pass
+            return True
+        session.send_line = fake_send_line
 
         mock_resp = MagicMock()
         mock_resp.status = 200
+        mock_resp.read.return_value = b'{"code": 0}'
         mock_urlopen.return_value.__enter__.return_value = mock_resp
 
         sms_data = {
-            "id": "boot_1_1726200000_sms_99",
+            "id": f"boot_1_{int(time.time()*1000)}_sms_99",
             "from": "10010",
             "content": "【中国联通】您的验证码是 889977",
             "code": "889977",
@@ -105,7 +115,7 @@ class TestAir17PushAckAndDegradation(unittest.TestCase):
         time.sleep(0.8)
 
         self.assertTrue(mock_urlopen.called, "即便板载蜂窝开启，上位机也必须优先宽带代推")
-        self.assertTrue(any("notify_ack" in l and "ok" in l for l in sent_lines),
+        self.assertTrue(any("notify_ack" in l and ("ok" in l or "handled" in l) for l in sent_lines),
                         "上位机代推成功后必须向模组回写 notify_ack [ok]")
         print("  -> 单卡 host_gateway Hub 验证通过")
 
@@ -123,14 +133,24 @@ class TestAir17PushAckAndDegradation(unittest.TestCase):
         hub.notify_config = {"feishu": {"enable": 1, "url": "http://127.0.0.1:9999/feishu_mock"}}
 
         sent_lines = []
-        session.send_line = lambda line: sent_lines.append(line)
+        def fake_send_line(line):
+            sent_lines.append(line)
+            try:
+                pkt = json.loads(line)
+                if pkt.get("cmd") == "notify_ack":
+                    session.on_claim_response({"type": "res", "id": pkt.get("id"), "code": 0, "msg": "NOTIFY_CLAIMED", "data": {"id": pkt.get("data", {}).get("id"), "status": "claimed"}})
+            except Exception:
+                pass
+            return True
+        session.send_line = fake_send_line
 
         mock_resp = MagicMock()
         mock_resp.status = 200
+        mock_resp.read.return_value = b'{"code": 0}'
         mock_urlopen.return_value.__enter__.return_value = mock_resp
 
         hub._dispatch_host_proxy_push(session, "sms_rx", {
-            "id": "msg_cluster_01",
+            "id": f"msg_cluster_{int(time.time()*1000)}",
             "from": "10010",
             "content": "集群测试验证码 123456",
             "code": "123456"
@@ -139,7 +159,7 @@ class TestAir17PushAckAndDegradation(unittest.TestCase):
         time.sleep(0.8)
 
         self.assertTrue(mock_urlopen.called, "集群版在蜂窝开启时也必须优先宽带代推")
-        self.assertTrue(any("notify_ack" in l and "ok" in l for l in sent_lines),
+        self.assertTrue(any("notify_ack" in l and ("ok" in l or "handled" in l) for l in sent_lines),
                         "集群版代推成功后必须向模组回写 notify_ack [ok]")
         print("  -> 集群 cluster_gateway Hub 验证通过")
 

@@ -109,6 +109,13 @@ def build(output_dir=None, build_info=None, fota_bundle=None):
         "--hidden-import=serial.tools.list_ports",
         "--hidden-import=PIL.ImageDraw",
         "--hidden-import=PIL.Image",
+        "--hidden-import=clr",
+        "--hidden-import=pythonnet",
+        "--hidden-import=clr_loader",
+        "--hidden-import=bottle",
+        "--hidden-import=webview",
+        "--hidden-import=webview.platforms.winforms",
+        "--collect-all=webview",
     ]
     if build_info:
         cmd.append(f"--add-data={build_info};.")

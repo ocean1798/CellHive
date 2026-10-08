@@ -68,7 +68,15 @@ sys.stderr = _SafeStream(sys.stderr)
 sys.stdout = _SafeStream(sys.stdout)
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, "..", ".."))
+def _find_project_root():
+    p = os.path.dirname(os.path.abspath(__file__))
+    while p and os.path.dirname(p) != p:
+        if os.path.exists(os.path.join(p, "board.md")):
+            return p
+        p = os.path.dirname(p)
+    return os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."))
+
+PROJECT_ROOT = _find_project_root()
 
 def get_bundle_resource_dir(sub_name: str, fallback_path: str) -> str:
     """支持 PyInstaller 打包资源与开发源码双路径解析"""
@@ -356,7 +364,7 @@ def extract_package_images(work_dir: str, chip_type: str) -> None:
     fcelf_exe = os.path.join(work_dir, "fcelf.exe")
     cmd = [fcelf_exe, "-E", "-input", "luatos.binpkg"]
     try:
-        p = subprocess.run(cmd, cwd=work_dir, capture_output=True, text=True, timeout=15.0)
+        p = subprocess.run(cmd, cwd=work_dir, capture_output=True, encoding="utf-8", errors="replace", timeout=15.0)
         if p.returncode != 0:
             raise RuntimeError(f"{chip_type.upper()} 固件解包失败: {p.stderr or p.stdout}")
     except subprocess.TimeoutExpired:
@@ -524,19 +532,30 @@ def flash_hardware_cli(
     chip = normalize_chip_type(hardware_model, chip_type)
     chip_cfg = CHIP_CONFIGS[chip]
 
-    def emit(pct: int, txt: str):
+    def emit(pct: int, txt: str, stage: str = "flashing"):
         capped = min(pct, 100)
         log(f"[{capped}%] [{chip_cfg['name']}] {txt}")
         if progress_cb:
             try:
-                progress_cb(capped, txt)
+                progress_cb(capped, txt, stage)
+            except TypeError:
+                try:
+                    progress_cb(capped, txt)
+                except Exception:
+                    pass
             except Exception:
                 pass
 
-    work_dir = os.path.join(tempfile.gettempdir(), f"air780_flasher_{int(time.time()*1000)}_{os.getpid()}")
-    os.makedirs(work_dir, exist_ok=True)
+    base_temp = tempfile.gettempdir()
+    if any(ord(c) > 127 for c in base_temp):
+        base_temp = os.path.join(os.environ.get("SystemDrive", "C:"), "Temp")
+    work_dir = os.path.join(base_temp, f"air780_flasher_{int(time.time()*1000)}_{os.getpid()}")
 
     try:
+        os.makedirs(work_dir, exist_ok=True)
+        # 纯英文沙箱绝对物理隔离：将 FlashToolCLI.exe 也自包含至 work_dir 本地调用，彻底杜绝路径中文闪退
+        local_flashtool = os.path.join(work_dir, "FlashToolCLI.exe")
+        shutil.copy2(FLASHTOOL_CLI, local_flashtool)
         mode_str = "全量系统刷写 (Full Flash)" if mode == "full" else "应用脚本更新 (Script Flash)"
         emit(5, f"正在准备 {chip_cfg['name']} 固件资产与打包 script.bin...")
         target_bin = os.path.join(work_dir, "script.bin")
@@ -559,26 +578,37 @@ def flash_hardware_cli(
                 log(f"LuaDB 固件打包失败: {e}")
                 return {"ok": False, "msg": f"LuaDB 固件打包失败: {e}"}
 
-        # 2. 引导模组切入 Bootloader 模式
-        emit(15, "正在检测或引导模组切入 Bootloader 模式...")
+        # 2. 引导模组切入 Bootloader 模式 (人机协同 60 秒高频守候态)
         target_port = current_vuart_port or (identity.get("port") if isinstance(identity, dict) else None)
         boot_port = find_bootloader_port(identity)
         if not boot_port and target_port:
             trigger_soft_reboot_to_boot(target_port, identity)
 
         start_wait = time.time()
-        while not boot_port and (time.time() - start_wait < 12.0):
-            time.sleep(0.2)
+        max_wait_seconds = 60.0
+        last_hint_time = -5.0  # 立即在第 0 秒发出首条操作提醒广播
+
+        while not boot_port and (time.time() - start_wait < max_wait_seconds):
+            elapsed = time.time() - start_wait
+            remain = int(max_wait_seconds - elapsed)
+            if elapsed - last_hint_time >= 4.0:
+                last_hint_time = elapsed
+                emit(
+                    15,
+                    f"正在守候设备进入烧录模式 (剩余 {remain} 秒)... 请在模组上【按住 BOOT 键不放，点按一下 RST 键】(或拔插一次 USB)",
+                    stage="waiting_boot"
+                )
+            time.sleep(0.05)
             boot_port = find_bootloader_port(identity)
 
         if not boot_port:
             return {
                 "ok": False,
-                "msg": "未能捕获 Bootloader 烧录端口 (VID 17D1:0001)，请按住板载 S1(BOOT) 按键重新插入 USB 救砖",
+                "msg": "未能在 60 秒内检测到 BootROM 烧录端口 (VID 17D1:0001)，烧录已取消。请按住板载 S1(BOOT) 按键点按 RST 键后重试",
                 "phase": "uncertain"
             }
 
-        emit(30, f"已连接 Bootloader 端口: {boot_port}，正在装配配置文件...")
+        emit(30, f"🎯 瞬间捕获到烧录端口: {boot_port}！正在装配配置文件...", stage="flashing")
         time.sleep(0.3)
 
         # 3. 动态组装 config_pkg_product_usb.ini 并同步关键资源至沙箱
@@ -604,7 +634,7 @@ def flash_hardware_cli(
         if chip in ("ec718pv", "ec718pm"):
             emit(50, "正在与芯片 Bootloader 握手 (probe)...")
             cmd_probe = [
-                FLASHTOOL_CLI,
+                local_flashtool,
                 "--cfgfile", "config_pkg_product_usb.ini",
                 "--port", boot_port,
                 "probe"
@@ -624,7 +654,7 @@ def flash_hardware_cli(
         emit(70, f"握手成功！正在执行{mode_str}...")
 
         cmd_burn = [
-            FLASHTOOL_CLI,
+            local_flashtool,
             "--cfgfile", "config_pkg_product_usb.ini",
             "--port", boot_port,
         ]
@@ -643,7 +673,7 @@ def flash_hardware_cli(
         # 7. 执行 sysreset (安全软复位重启)
         emit(90, "固件写入完成，正在平滑复位重启模组...")
         cmd_reset = [
-            FLASHTOOL_CLI,
+            local_flashtool,
             "--cfgfile", "config_pkg_product_usb.ini",
             "--port", boot_port,
             "--skipconnect", "1",
