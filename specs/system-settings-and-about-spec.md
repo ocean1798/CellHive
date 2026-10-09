@@ -135,7 +135,7 @@
 
 ### 5.1 检查更新 (GitHub Releases API)
 - **请求方式**：前端浏览器原生异步调用：
-  `https://api.github.com/repos/ocean1798/Air780EPV-Smart-Gateway/releases/latest`
+  `https://api.github.com/repos/ocean1798/CellHive/releases/latest`
 - **防抖与容错机制**：
   - 严格限制 30 秒冷却防抖时间；
   - 配置 `AbortController` 6 秒超时门禁，超时或 403 限频时优雅降级提示“暂无法连接 GitHub，可手动前往 Releases 查看”；
@@ -144,6 +144,6 @@
 ### 5.2 托盘联动与社区直链
 - 托盘菜单“ℹ️ 关于数字蜂巢”直接唤起 `http://127.0.0.1:17801/#about`；
 - 前端识别 `#about` 自动展开设置抽屉并平滑滚动到底部关于铭牌；
-- 官方仓库：`https://github.com/ocean1798/Air780EPV-Smart-Gateway`
-- 发布页面：`https://github.com/ocean1798/Air780EPV-Smart-Gateway/releases`
-- 问题反馈：`https://github.com/ocean1798/Air780EPV-Smart-Gateway/issues/new`
+- 官方仓库：`https://github.com/ocean1798/CellHive`
+- 发布页面：`https://github.com/ocean1798/CellHive/releases`
+- 问题反馈：`https://github.com/ocean1798/CellHive/issues/new`

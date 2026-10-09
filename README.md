@@ -1,4 +1,4 @@
-# ⚡ 合宙 Air780 4G 随身短信网关
+# ⚡ 数字蜂巢 · CellHive (合宙 4G 模组智能通信网关与桌面客户端)
 
 <div align="center">
 
@@ -6,7 +6,7 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 [![Hardware](https://img.shields.io/badge/硬件-Air780EPM%20%7C%20Air780EPV%20%7C%20Air780E-orange.svg)](#hardware)
 [![Desktop App](https://img.shields.io/badge/软件-Windows%20单文件免安装-success.svg)](#quickstart)
-[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/ocean1798/Air780EPV-Smart-Gateway/pulls)
+[![PRs Welcome](https://img.shields.io/badge/PRs-welcome-brightgreen.svg)](https://github.com/ocean1798/CellHive/pulls)
 
 **插上电脑自动收短信 • 验证码自动存入剪贴板直接 Ctrl+V • 插电脑不耗手机卡流量 • Windows 免安装双击即用**
 
@@ -39,7 +39,7 @@
 
 | 需要什么文件？ | 在哪里拿？ | 怎么用？ |
 | :--- | :--- | :--- |
-| **电脑控制软件 (Exe)** | [👉 **前往 Releases 页面下载 `Air780EPV-Gateway.exe`**](https://github.com/ocean1798/Air780EPV-Smart-Gateway/releases) | 绿色免安装，下载后双击运行即可，自动打开网页后台。 |
+| **电脑控制软件 (Exe)** | [👉 **前往 Releases 页面下载 `CellHive.exe`** (亦提供兼容别名 `Air780EPV-Gateway.exe`)](https://github.com/ocean1798/CellHive/releases) | 绿色免安装，下载后双击运行即可，自动打开网页后台。 |
 | **网关功能代码** | 本项目 `deploy/smart-gateway-780epv/` | 最新版源码（里面有 11 个 lua 脚本，通用适配所有型号）。 |
 | **模块底层包 (Core)** | 本项目 `deploy/core/` | 官方底层固件，按手里的模块型号挑一个刷入（见下方选型表）。 |
 
@@ -77,7 +77,7 @@
 
 ### 第 3 步：插卡即用
 1. 模块拔下来插上手机 SIM 卡，重新插回电脑；
-2. 双击运行刚才下载的 **`Air780EPV-Gateway.exe`**；
+2. 双击运行刚才下载的 **`CellHive.exe`**（或兼容别名 **`Air780EPV-Gateway.exe`**）；
 3. 电脑会自动弹出管理网页（`http://127.0.0.1:17801`），信号连上后就能正常收发短信了！
 
 ---
@@ -117,6 +117,6 @@
 <details>
 <summary><b>📖 English Abstract</b></summary>
 
-> **Air780-Smart-Gateway** turns affordable 4G Cat.1 modules (Air780EPM / Air780EPV / Air780E) into a handy desktop SMS forwarder. It auto-copies verification codes to your Windows clipboard, pushes incoming SMS to Feishu, DingTalk, WeCom and Bark, consumes 0 cellular data when connected to PC, and runs via a single standalone Windows executable.
+> **CellHive** (数字蜂巢) turns affordable 4G Cat.1 modules (Air780EPM / Air780EPV / Air780E / Air780EC / Air700E) into a handy desktop SMS gateway and client. It auto-copies verification codes to your Windows clipboard, pushes incoming SMS to Feishu, DingTalk, WeCom and Bark, consumes 0 cellular data when connected to PC, and runs via a single standalone Windows executable (`CellHive.exe`).
 
 </details>

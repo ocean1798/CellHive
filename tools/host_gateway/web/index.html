@@ -3083,7 +3083,7 @@
         <div class="detail-section-title">3. 运行策略与偏好</div>
         <div class="strategy-grid-container" style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 0.5rem; margin-top: 0.4rem;">
 
-          <div class="strategy-item-card" style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-card); padding: 0.55rem 0.65rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+          <div data-desktop-only class="strategy-item-card" style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-card); padding: 0.55rem 0.65rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
             <div>
               <div style="font-size: 0.75rem; font-weight: 600; color: #f8fafc;">开机自动启动 (静默守护)</div>
               <div style="font-size: 0.65rem; color: #94a3b8;">Windows 登录时自动常驻托盘守护，不弹大窗打扰</div>
@@ -3127,7 +3127,7 @@
             </label>
           </div>
 
-          <div class="strategy-item-card" style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-card); padding: 0.55rem 0.65rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
+          <div data-desktop-only class="strategy-item-card" style="display: flex; align-items: center; justify-content: space-between; background: var(--bg-card); padding: 0.55rem 0.65rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color);">
             <div>
               <div style="font-size: 0.75rem; font-weight: 600; color: #f8fafc;">桌面屏幕右下角通知</div>
               <div style="font-size: 0.65rem; color: #94a3b8;">收到新短信或验证码时，弹出原生系统 Toast 消息卡片</div>
@@ -3173,7 +3173,7 @@
       </div>
 
       <!-- 4. 局域网访问与跨设备协作 (AIR-57 / AIR-62) -->
-      <div>
+      <div data-desktop-only>
         <div class="detail-section-title">4. 局域网访问与跨设备协作</div>
         <div id="lan_access_card_box" style="background: var(--bg-card); padding: 0.75rem 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-top: 0.4rem; transition: border-color 0.2s ease;">
           <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 0.5rem;">
@@ -3213,7 +3213,7 @@
       </div>
 
       <!-- 5. 数据维护与运行日志 (AIR-57) -->
-      <div>
+      <div data-desktop-only>
         <div class="detail-section-title">5. 数据维护与运行日志</div>
         <div style="background: var(--bg-card); padding: 0.75rem 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-top: 0.4rem; display: flex; flex-direction: column; gap: 0.6rem;">
           <div style="display: flex; align-items: center; justify-content: space-between; gap: 0.5rem;">
@@ -3253,10 +3253,10 @@
               </div>
               <div style="min-width: 0; flex: 1;">
                 <div style="font-size: 0.82rem; font-weight: 700; color: #f8fafc; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">数字蜂巢 CellHive</div>
-                <div id="about_version_label" style="font-size: 0.66rem; color: #38bdf8; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">v1.3.0 · 官方绿色版</div>
+                <div id="about_version_label" style="font-size: 0.66rem; color: #38bdf8; font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">正在读取版本…</div>
               </div>
             </div>
-            <button type="button" id="btn_check_update" class="btn btn-secondary btn-sm" onclick="checkGitHubUpdate()" style="padding: 0.25rem 0.55rem; font-size: 0.68rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 0.25rem; flex-shrink: 0; white-space: nowrap;">
+            <button type="button" data-desktop-only id="btn_check_update" class="btn btn-secondary btn-sm" onclick="checkGitHubUpdate()" style="padding: 0.25rem 0.55rem; font-size: 0.68rem; border-radius: 4px; display: inline-flex; align-items: center; gap: 0.25rem; flex-shrink: 0; white-space: nowrap;">
               <span>🔄</span><span>检查更新</span>
             </button>
           </div>
@@ -3264,10 +3264,10 @@
           <div style="font-size: 0.66rem; color: #94a3b8; line-height: 1.5; border-top: 1px solid rgba(255,255,255,0.06); padding-top: 0.5rem;">
             全场景硬件即插即用，原生适配 Air780 系列 4G 模组与短信外呼中枢。完全免安装绿色守护，保护个人隐私与通信自由。
             <div style="margin-top: 0.4rem; display: flex; gap: 0.8rem;">
-              <a href="https://github.com/ocean1798/Air780EPV-Smart-Gateway" target="_blank" rel="noopener noreferrer" style="color: #38bdf8; text-decoration: none; display: inline-flex; align-items: center; gap: 0.2rem;">
+              <a href="https://github.com/ocean1798/CellHive" target="_blank" rel="noopener noreferrer" style="color: #38bdf8; text-decoration: none; display: inline-flex; align-items: center; gap: 0.2rem;">
                 <span>🌐</span><span>GitHub 开源主页</span>
               </a>
-              <a href="https://github.com/ocean1798/Air780EPV-Smart-Gateway/releases" target="_blank" rel="noopener noreferrer" style="color: #38bdf8; text-decoration: none; display: inline-flex; align-items: center; gap: 0.2rem;">
+              <a href="https://github.com/ocean1798/CellHive/releases" target="_blank" rel="noopener noreferrer" style="color: #38bdf8; text-decoration: none; display: inline-flex; align-items: center; gap: 0.2rem;">
                 <span>📦</span><span>版本发布历史</span>
               </a>
             </div>
@@ -3276,7 +3276,7 @@
       </div>
 
       <!-- 7. AI 智能体通信服务 (MCP) -->
-      <div>
+      <div data-desktop-only>
         <div class="detail-section-title">7. AI 智能体通信服务 (MCP)</div>
         <div style="background: var(--bg-card); padding: 0.75rem 0.85rem; border-radius: var(--radius-sm); border: 1px solid var(--border-color); margin-top: 0.4rem;">
           <div style="display: flex; align-items: center; justify-content: space-between;">
@@ -3324,6 +3324,7 @@
   <div class="toast-container" id="toastContainer"></div>
 
   <!-- 生产纯净驱动脚本 -->
+  <script src="./runtime-config.js"></script>
   <script>
     // 0. 隐私演示模式零闪烁预加载 (Early Demo Mode Boot)
     const initDemoMode = (function() {
@@ -3860,6 +3861,10 @@
       status: null,
       smsList: [],
       callsList: [],
+      callsNextCursor: null,
+      callsHasMore: false,
+      callsLoadingMore: false,
+      callsRequestId: 0,
       sortOrder: 'desc',
       filterKeyword: '',
       currentTab: 'sms',
@@ -3878,6 +3883,12 @@
     };
 
     const slotDataMap = {};
+
+    function recordKey(record) {
+      const entry = record.archive_key || (record._archive && record._archive.entryId);
+      if (entry) return `${record.iccid || '_unassigned'}:${entry}`;
+      return `${record.iccid || '_unassigned'}:${record.id || ''}:${record.phone || ''}:${record.time || ''}:${record.content || ''}`;
+    }
 
     function getSafeSlotInfo(slotId) {
       if (!slotId) return { name: '未知模组', carrier: '蜂窝网络', model: 'Air780', port: '', sim: '', rawPhone: '' };
@@ -3938,6 +3949,20 @@
     // =========================================================
     // 2. HTTP REST 通信层
     // =========================================================
+    function applyRuntimeCapabilities() {
+      const caps = window.GATEWAY_RUNTIME?.capabilities || {};
+      if (caps.desktop === false) {
+        document.querySelectorAll('[data-desktop-only]').forEach(el => { el.hidden = true; el.style.display = 'none'; });
+      }
+      const badge = document.getElementById('appVersionBadge');
+      if (badge && window.GATEWAY_RUNTIME?.businessVersion) badge.textContent = `v${window.GATEWAY_RUNTIME.businessVersion}`;
+    }
+
+    function runtimeUrl(endpoint) {
+      const basePath = (window.GATEWAY_RUNTIME && window.GATEWAY_RUNTIME.basePath) || "/";
+      return basePath + endpoint.replace(/^\/+/, "");
+    }
+
     async function apiFetch(endpoint, method = "GET", body = null) {
       try {
         let opts = { method: "GET", headers: { "Content-Type": "application/json" } };
@@ -3950,7 +3975,7 @@
           opts.method = method;
           if (body) opts.body = JSON.stringify(body);
         }
-        const res = await fetch(endpoint, opts);
+        const res = await fetch(runtimeUrl(endpoint), opts);
         return await res.json();
       } catch (err) {
         if (endpoint === "/api/sms/send") {
@@ -4291,17 +4316,46 @@
     // =========================================================
     // 6. Tab 切换与来电拉取
     // =========================================================
-    async function fetchCallsHistory() {
+    async function fetchCallsHistory(reset = true) {
+      if (reset) {
+        state.callsRequestId++;
+        state.callsNextCursor = null;
+        state.callsHasMore = false;
+      }
+      const requestId = state.callsRequestId;
       try {
-        const res = await apiFetch("/api/calls?limit=50");
+        const cursor = !reset && state.callsNextCursor
+          ? `&cursor=${encodeURIComponent(state.callsNextCursor)}` : "";
+        const res = await apiFetch(`/api/calls?limit=50${cursor}`);
+        if (requestId !== state.callsRequestId) return;
         if (res && res.ok && res.data) {
           const items = res.data.items || res.data.list || [];
-          state.callsList = items;
+          state.callsNextCursor = res.data.next_cursor || null;
+          state.callsHasMore = Boolean(res.data.has_more);
+          if (reset) {
+            state.callsList = items;
+          } else {
+            const seen = new Set(state.callsList.map(recordKey));
+            for (const item of items) {
+              const key = recordKey(item);
+              if (!seen.has(key)) { state.callsList.push(item); seen.add(key); }
+            }
+          }
           renderCallsList(state.callsList);
           return;
         }
       } catch (e) {}
-      renderCallsList([]);
+      if (reset && requestId === state.callsRequestId) {
+        state.callsList = [];
+        renderCallsList([]);
+      }
+    }
+
+    async function loadMoreCalls() {
+      if (state.callsLoadingMore || !state.callsHasMore) return;
+      state.callsLoadingMore = true;
+      try { await fetchCallsHistory(false); }
+      finally { state.callsLoadingMore = false; }
     }
 
     function renderCallsList(items) {
@@ -4326,24 +4380,31 @@
         const rawCaller = call.caller || call.phone || "未知来电";
         const caller = maskSensitiveData(rawCaller, 'caller');
         const timeStr = call.time || "刚刚";
-        const status = call.status || "已挂断";
+        const status = call.status || call.action || "状态未知";
 
         const card = document.createElement("div");
         card.className = "call-item";
         card.innerHTML = `
           <div class="sms-header">
             <div class="sms-header-left">
-              <span class="sms-slot-pill">${getSlotDisplayTag(call.slot || 'slot_1')}</span>
-              <span class="sms-sender">📞 ${caller}</span>
-              <span class="sms-service-pill" style="color: #fca5a5; background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.3);">${status}</span>
+              <span class="sms-slot-pill">${escapeHtml(getSlotDisplayTag(call.slot, call))}</span>
+              <span class="sms-sender">📞 ${escapeHtml(caller)}</span>
+              <span class="sms-service-pill" style="color: #fca5a5; background: rgba(239, 68, 68, 0.12); border-color: rgba(239, 68, 68, 0.3);">${escapeHtml(status)}</span>
             </div>
             <div class="sms-header-right">
-              <span class="sms-time">${timeStr}</span>
+              <span class="sms-time">${escapeHtml(timeStr)}</span>
             </div>
           </div>
         `;
         container.appendChild(card);
       });
+      if (state.callsHasMore) {
+        const more = document.createElement("button");
+        more.className = "sms-load-more sms-load-more-btn";
+        more.textContent = "加载更早的来电记录";
+        more.onclick = loadMoreCalls;
+        container.appendChild(more);
+      }
     }
 
     function switchContentTab(tab) {
@@ -4499,11 +4560,11 @@
           </div>
 
           <div class="card-actions-grid">
-            <button class="btn-card-action action-primary" onclick="openFotaModal('${slotId}')" title="在线升级模组内部通信固件">
-              <span>🔍</span><span>检查更新</span>
+            <button class="btn-card-action action-primary" ${window.GATEWAY_RUNTIME?.capabilities?.maintenance === false ? 'disabled title="固件更新请使用 Windows 上位机"' : `onclick="openFotaModal('${slotId}')" title="在线升级模组内部通信固件"`}>
+              <span>🔍</span><span>${window.GATEWAY_RUNTIME?.capabilities?.maintenance === false ? '插件不提供固件更新' : '检查更新'}</span>
             </button>
-            <button class="btn-card-action" onclick="openFlashModal('${slotId}')" title="物理重刷与急救修复">
-              <span>🛠️</span><span>重新刷机</span>
+            <button class="btn-card-action" ${window.GATEWAY_RUNTIME?.capabilities?.maintenance === false ? 'disabled title="刷机请使用 Windows 上位机"' : `onclick="openFlashModal('${slotId}')" title="物理重刷与急救修复"`}>
+              <span>🛠️</span><span>${window.GATEWAY_RUNTIME?.capabilities?.maintenance === false ? '插件不提供刷机' : '重新刷机'}</span>
             </button>
             <button class="btn-card-action action-danger" onclick="openRebootModal('${slotId}')" title="软重启模组硬件">
               <span>⚡</span><span>重启设备</span>
@@ -4562,12 +4623,22 @@
       const isExplicitNoSim = (data.iccid === "未插卡" || data.sim_ready === false || (frameIccid === "" && !frameHasNetwork));
 
       // 1. 缓存失效防线：若设备离线或明确显式未插卡，精准清空 SIM 级缓存，杜绝换卡/拔卡后残留历史脏数据
-      if (!isOnline || isExplicitNoSim) {
+      const explicitPhoneClear = (Object.prototype.hasOwnProperty.call(data, "phone") || Object.prototype.hasOwnProperty.call(data, "number"))
+        && !String(data.phone || data.number || "").trim();
+      if (!isOnline || isExplicitNoSim || countIdentityChanged) {
         slotCache.iccid = "";
         slotCache.sim = "";
         slotCache.rawPhone = "";
         slotCache.formattedPhone = "";
         slotCache.carrier = "";
+      } else if (explicitPhoneClear) {
+        slotCache.sim = "";
+        slotCache.rawPhone = "";
+        slotCache.formattedPhone = "";
+      }
+      if (countIdentityChanged && data.imei && slotCache.imei && String(data.imei).trim() !== slotCache.imei) {
+        slotCache.version = "";
+        slotCache.model = "";
       }
 
       // 2. 有效静态硬件属性入池
@@ -4693,6 +4764,7 @@
         if (signalBars) safeUpdateStyle(signalBars, "display", "none");
         if (noSimBadge) safeUpdateStyle(noSimBadge, "display", "inline-flex");
         if (phoneBtn) safeUpdateStyle(phoneBtn, "display", "none");
+        safeUpdateText(phoneText, "");
         if (rndisSwitch) { rndisSwitch.checked = false; rndisSwitch.disabled = true; }
         if (dataSwitch) { dataSwitch.checked = false; dataSwitch.disabled = true; }
         if (btnSend) btnSend.disabled = true;
@@ -4748,6 +4820,8 @@
             }
           } else {
             safeUpdateStyle(phoneBtn, "display", "none");
+            safeUpdateText(phoneText, "");
+            phoneBtn.removeAttribute("onclick");
           }
         }
         if (rndisSwitch) {
@@ -4948,7 +5022,9 @@
           const empty = document.createElement("div");
           empty.id = "slotCardsEmpty";
           empty.style.cssText = "padding: 3rem 1rem; text-align: center; color: #64748b; font-size: 0.8rem; line-height: 1.6;";
-          empty.innerHTML = "🔌 <b>未检测到已接入的 4G 模组</b><br><span style='font-size: 0.72rem;'>请将开发板插入 USB 端口后点击右上角【🔄 扫描】</span>";
+          empty.innerHTML = window.GATEWAY_RUNTIME?.capabilities?.maintenance === false
+            ? "🔌 <b>当前没有接入的 4G 模组</b><br><span style='font-size: 0.72rem;'>接入设备后会自动显示，页面可继续使用</span>"
+            : "🔌 <b>未检测到已接入的 4G 模组</b><br><span style='font-size: 0.72rem;'>请将开发板插入 USB 端口后点击右上角【🔄 扫描】</span>";
           container.appendChild(empty);
         }
       } else if (emptyEl) {
@@ -5073,9 +5149,9 @@
           if (reset) {
             state.smsList = newItems;
           } else {
-            const existingKeys = new Set(state.smsList.map(s => s.id || `${s.phone}_${s.time}_${s.content}`));
+            const existingKeys = new Set(state.smsList.map(recordKey));
             for (const it of newItems) {
-              const k = it.id || `${it.phone}_${it.time}_${it.content}`;
+              const k = recordKey(it);
               if (!existingKeys.has(k)) {
                 state.smsList.push(it);
                 existingKeys.add(k);
@@ -5211,14 +5287,18 @@
 
         let otpBtnHtml = "";
         if (otp) {
+          const otpArg = escapeHtml(JSON.stringify(String(otp)));
           const displayOtp = (state && state.isDemoMode) ? maskSensitiveData(otp, 'otp', true) : otp;
           otpBtnHtml = `
-            <button class="otp-pill-btn" onclick="copyOtp('${otp}')" title="点击直接复制验证码">
-              🔑 复制验证码: <b>${displayOtp}</b>
+            <button class="otp-pill-btn" onclick="copyOtp(${otpArg})" title="点击直接复制验证码">
+              🔑 复制验证码: <b>${escapeHtml(displayOtp)}</b>
             </button>
           `;
         }
 
+        const deleteKeyArg = escapeHtml(JSON.stringify(encodeURIComponent(sms.archive_key || (sms._archive && sms._archive.entryId) || '')));
+        const deleteIccidArg = escapeHtml(JSON.stringify(String(sms.iccid || '')));
+        const deleteOwnershipArg = escapeHtml(JSON.stringify(sms.iccid ? 'confirmed' : 'unassigned'));
         const maskedSender = maskSensitiveData(sender, 'sender');
         const senderTitle = brandInfo.isBranded ? `${brandInfo.title} (${maskedSender})` : maskedSender;
         const senderDisplay = brandInfo.isBranded ? brandInfo.title : maskedSender;
@@ -5226,14 +5306,14 @@
         card.innerHTML = `
           <div class="sms-header">
             <div class="sms-header-left">
-              <span class="sms-slot-pill">${slotLabel}</span>
-              <span class="sms-sender" title="${senderTitle}">${senderDisplay}</span>
+              <span class="sms-slot-pill">${escapeHtml(slotLabel)}</span>
+              <span class="sms-sender" title="${escapeHtml(senderTitle)}">${escapeHtml(senderDisplay)}</span>
               <span class="sms-service-pill">服务通知</span>
             </div>
             <div class="sms-header-right">
               ${otpBtnHtml}
-              <span class="sms-time">${timeStr}</span>
-              <button class="btn-delete-sms" onclick="deleteSingleSms(this, '${sms.id || ''}', '${timeStr}', '${sender}', '${encodeURIComponent(content)}', '${sms.iccid || ''}', '${sms.slot || ''}')" title="清除此条记录（不影响模组硬件存储）">🧹</button>
+              <span class="sms-time">${escapeHtml(timeStr)}</span>
+              <button class="btn-delete-sms" onclick="deleteSingleSms(this, ${deleteKeyArg}, ${deleteIccidArg}, ${deleteOwnershipArg})" title="清除此条记录（不影响模组硬件存储）">🧹</button>
             </div>
           </div>
           <div class="sms-body">${displayContent}</div>
@@ -5360,29 +5440,30 @@
       }
     }
 
-    function deleteSingleSms(btn, id, time, phone, encodedContent = '', iccid = '', slot = '') {
+    async function deleteSingleSms(btn, encodedKey, iccid = '', ownership = 'unassigned') {
       if (window.event) window.event.stopPropagation();
       const smsItem = btn.closest(".sms-item");
       if (!smsItem) return;
+
+      let archiveKey = "";
+      try { archiveKey = decodeURIComponent(encodedKey); } catch (e) { archiveKey = encodedKey; }
+      if (!archiveKey) { showToast("无法识别这条记录，请刷新后重试", "danger"); return; }
+      const result = await apiFetch("/api/control/delete_sms", "POST", {
+        archive_key: archiveKey, iccid, ownership
+      });
+      if (!result || !result.ok) {
+        showToast("清除失败，请刷新后重试", "danger");
+        return;
+      }
 
       smsItem.style.transition = "all 0.25s ease";
       smsItem.style.transform = "translateX(40px)";
       smsItem.style.opacity = "0";
 
-      let content = "";
-      try { content = decodeURIComponent(encodedContent); } catch(e) { content = encodedContent; }
-
-      if (state.isLive) {
-        apiFetch("/api/control/delete_sms", "POST", { id, time, phone, content, iccid, slot });
-      }
-
       // 同步从 state.smsList 内存状态移除
       if (Array.isArray(state.smsList)) {
-        state.smsList = state.smsList.filter(s => {
-          if (id && s.id === id) return false;
-          if (s.phone === phone && s.content === content) return false;
-          return true;
-        });
+        const removedKey = `${iccid || '_unassigned'}:${archiveKey}`;
+        state.smsList = state.smsList.filter(s => recordKey(s) !== removedKey);
       }
 
       setTimeout(() => {
@@ -5802,9 +5883,9 @@
           // 关于版本铭牌
           const elVer = document.getElementById("about_version_label");
           if (elVer) {
-            elVer.textContent = `v${sd.version || "1.3.0"} · ${sd.build_type === "standalone_exe" ? "官方免安装绿色版" : "源码开发版"}`;
+            elVer.textContent = `v${sd.version || window.GATEWAY_RUNTIME?.businessVersion || "未知"} · ${sd.build_type === "managed_plugin" ? "硅基涌现插件" : (sd.build_type === "standalone_exe" ? "官方免安装绿色版" : "源码开发版")}`;
           }
-          state.appCurrentVersion = sd.version || "1.3.0";
+          state.appCurrentVersion = sd.version || window.GATEWAY_RUNTIME?.businessVersion || "";
           state.notifySavedDraftSnapshot = notifyFormSnapshot();
         }
       } catch (e) {}
@@ -5893,11 +5974,19 @@
         }
       };
 
+      if (window.GATEWAY_RUNTIME?.capabilities?.desktop === false) {
+        for (const key of ['autostart', 'desktop_notification', 'lan_access']) delete payload.system[key];
+        delete payload.mcp;
+      }
       if (state.isLive) {
         // 先增量持久化系统偏好
         try {
-          await apiFetch("/api/system/settings", "POST", payload.system);
-        } catch (e) {}
+          const savedSystem = await apiFetch("/api/system/settings", "POST", payload.system);
+          if (!savedSystem?.ok) {
+            showToast("系统偏好保存失败: " + (savedSystem?.error || "服务未响应"), "danger");
+            return;
+          }
+        } catch (e) { showToast("系统偏好保存失败，请稍后重试", "danger"); return; }
 
         const res = await apiFetch("/api/config/notify", "POST", payload);
         if (res && res.ok) {
@@ -6770,7 +6859,7 @@
           try { state.eventSource.close(); } catch (e) {}
           state.eventSource = null;
         }
-        const sse = new EventSource("/api/events");
+        const sse = new EventSource(runtimeUrl("/api/events"));
         state.eventSource = sse;
         sse.onopen = () => {
           state.deviceOnline = true;
@@ -6792,8 +6881,8 @@
             if (state.focusCleanMode) {
               sms._isNewFocus = true;
             }
-            const k = sms.id || `${sms.phone}_${sms.time}_${sms.content}`;
-            const exists = state.smsList.some(s => (s.id || `${s.phone}_${s.time}_${s.content}`) === k);
+            const k = recordKey(sms);
+            const exists = state.smsList.some(s => recordKey(s) === k);
             if (!exists) {
               state.smsList.unshift(sms);
               state.smsTotal = (state.smsTotal || 0) + 1;
@@ -6819,8 +6908,10 @@
         sse.addEventListener("call_incoming", (e) => {
           try {
             const call = JSON.parse(e.data);
-            state.callsList.unshift(call);
-            renderCallsList(state.callsList);
+            if (!state.callsList.some(item => recordKey(item) === recordKey(call))) {
+              state.callsList.unshift(call);
+              renderCallsList(state.callsList);
+            }
             const maskedCaller = maskSensitiveData(call.caller || call.phone, 'caller');
             showToast(`📞 收到新来电: 来自 ${maskedCaller}`, "info");
           } catch (err) {}
@@ -7009,15 +7100,17 @@
           } catch (err) {}
         });
 
-        sse.addEventListener("cluster_status", (e) => {
+        const onClusterUpdate = (e) => {
           try {
             const d = JSON.parse(e.data);
             const slots = (d.data && d.data.slots) || d.slots;
-            if (Array.isArray(slots) && slots.length > 0) {
+            if (Array.isArray(slots)) {
               renderSlots(slots);
             }
           } catch (err) {}
-        });
+        };
+        sse.addEventListener("cluster_status", onClusterUpdate);
+        sse.addEventListener("cluster_update", onClusterUpdate);
 
         sse.addEventListener("device_connected", (e) => {
           try {
@@ -7209,6 +7302,7 @@
 
     let _lastCheckUpdateTs = 0;
     async function checkGitHubUpdate() {
+      if (window.GATEWAY_RUNTIME?.capabilities?.desktop === false) return;
       const now = Date.now();
       if (now - _lastCheckUpdateTs < 30000) {
         const waitSec = Math.ceil((30000 - (now - _lastCheckUpdateTs)) / 1000);
@@ -7235,7 +7329,7 @@
       const timeoutId = setTimeout(() => controller.abort(), 6000);
 
       try {
-        const resp = await fetch("https://api.github.com/repos/ocean1798/Air780EPV-Smart-Gateway/releases/latest", {
+        const resp = await fetch("https://api.github.com/repos/ocean1798/CellHive/releases/latest", {
           signal: controller.signal,
           headers: { "Accept": "application/vnd.github.v3+json" }
         });
@@ -7250,7 +7344,7 @@
 
         const data = await resp.json();
         const latestTag = (data.tag_name || "").replace(/^v/, "").trim();
-        const currentVer = (state.appCurrentVersion || "1.3.0").replace(/^v/, "").trim();
+        const currentVer = (state.appCurrentVersion || window.GATEWAY_RUNTIME?.businessVersion || "").replace(/^v/, "").trim();
 
         // 语义化版本号数字比对 (SemVer Comparison)
         function compareSemver(v1, v2) {
@@ -7273,7 +7367,7 @@
             box.style.border = "1px solid rgba(16, 185, 129, 0.3)";
             box.style.color = "#10b981";
             box.innerHTML = `🎉 发现新版本 <strong>v${escapeHtml(latestTag)}</strong> (当前 v${escapeHtml(currentVer)})！<br>` +
-              `<a href="${escapeHtml(data.html_url || 'https://github.com/ocean1798/Air780EPV-Smart-Gateway/releases')}" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:underline;display:inline-block;margin-top:0.25rem;">点击前往 GitHub Releases 官方下载更新</a>`;
+              `<a href="${escapeHtml(data.html_url || 'https://github.com/ocean1798/CellHive/releases')}" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:underline;display:inline-block;margin-top:0.25rem;">点击前往 GitHub Releases 官方下载更新</a>`;
           } else {
             box.style.background = "rgba(148, 163, 184, 0.1)";
             box.style.border = "1px solid rgba(148, 163, 184, 0.25)";
@@ -7288,7 +7382,7 @@
           box.style.border = "1px solid rgba(245, 158, 11, 0.3)";
           box.style.color = "#fbbf24";
           box.innerHTML = `⚠️ 检查更新暂不可用 (${escapeHtml(err.message || '网络连接超时')})。<br>` +
-            `<a href="https://github.com/ocean1798/Air780EPV-Smart-Gateway/releases" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:underline;display:inline-block;margin-top:0.25rem;">点此手动前往 Releases 页面查看</a>`;
+            `<a href="https://github.com/ocean1798/CellHive/releases" target="_blank" rel="noopener noreferrer" style="color:#38bdf8;text-decoration:underline;display:inline-block;margin-top:0.25rem;">点此手动前往 Releases 页面查看</a>`;
         }
       } finally {
         if (btn) {
@@ -7303,6 +7397,7 @@
     // =========================================================
     window.addEventListener("DOMContentLoaded", async () => {
       try {
+        applyRuntimeCapabilities();
         updateDemoModeUi();
         ThemeManager.init();
         DynamicIslandController.init();

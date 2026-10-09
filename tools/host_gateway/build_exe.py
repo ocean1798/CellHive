@@ -141,13 +141,35 @@ def build(output_dir=None, build_info=None, fota_bundle=None):
         print(f"[-] 打包失败，退出码: {res.returncode}")
         sys.exit(res.returncode)
 
-    output_exe = os.path.join(dist_dir, "Air780EPV-Gateway.exe")
-    if os.path.exists(output_exe):
-        size_mb = os.path.getsize(output_exe) / (1024 * 1024)
+    # 4. 产物校验、体积门禁与双轨兼容分发 (CellHive.exe 与 Air780EPV-Gateway.exe)
+    primary_exe = os.path.join(dist_dir, "CellHive.exe")
+    legacy_exe = os.path.join(dist_dir, "Air780EPV-Gateway.exe")
+
+    # 如果输出了 Air780EPV-Gateway.exe 且主产物不存在，同步复制
+    if os.path.exists(legacy_exe) and not os.path.exists(primary_exe):
+        shutil.copy2(legacy_exe, primary_exe)
+    elif os.path.exists(primary_exe) and not os.path.exists(legacy_exe):
+        shutil.copy2(primary_exe, legacy_exe)
+
+    target_exe = primary_exe if os.path.exists(primary_exe) else legacy_exe
+
+    if os.path.exists(target_exe):
+        # 确保双轨产物同时存在且字节一致
+        if not os.path.exists(primary_exe) or not os.path.exists(legacy_exe):
+            if os.path.exists(primary_exe):
+                shutil.copy2(primary_exe, legacy_exe)
+            else:
+                shutil.copy2(legacy_exe, primary_exe)
+
+        for exe_p in (primary_exe, legacy_exe):
+            size_mb = os.path.getsize(exe_p) / (1024 * 1024)
+            assert size_mb <= 55.0, f"[-] 门禁阻断：Windows 单文件 EXE ({os.path.basename(exe_p)}) 体积超出 55MB 上限门禁！当前: {size_mb:.2f} MB > 55.00 MB"
+
+        primary_size_mb = os.path.getsize(primary_exe) / (1024 * 1024)
         print("=" * 60)
-        print(f"[+] 打包成功！独立可执行文件已生成:")
-        print(f"   路径: {output_exe}")
-        print(f"   体积: {size_mb:.2f} MB")
+        print(f"[+] 打包成功！双轨可执行文件已生成:")
+        print(f"   主程序: {primary_exe} ({primary_size_mb:.2f} MB)")
+        print(f"   兼容别名: {legacy_exe} ({os.path.getsize(legacy_exe) / (1024 * 1024):.2f} MB)")
         print(f"   说明: 单文件绿色免安装，双击即可在后台常驻并托盘运行。")
         print("=" * 60)
     else:
