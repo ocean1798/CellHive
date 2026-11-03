@@ -3879,7 +3879,8 @@
       smsRequestId: 0,
       searchTimer: null,
       focusCleanMode: false,
-      focusCleanTimestamp: 0
+      focusCleanTimestamp: 0,
+      rebootingSlots: {}
     };
 
     const slotDataMap = {};
@@ -4566,7 +4567,7 @@
             <button class="btn-card-action" ${window.GATEWAY_RUNTIME?.capabilities?.maintenance === false ? 'disabled title="刷机请使用 Windows 上位机"' : `onclick="openFlashModal('${slotId}')" title="物理重刷与急救修复"`}>
               <span>🛠️</span><span>${window.GATEWAY_RUNTIME?.capabilities?.maintenance === false ? '插件不提供刷机' : '重新刷机'}</span>
             </button>
-            <button class="btn-card-action action-danger" onclick="openRebootModal('${slotId}')" title="软重启模组硬件">
+            <button class="btn-card-action action-danger" id="btnRebootSlot${slotIdx}" onclick="openRebootModal('${slotId}')" title="软重启模组硬件">
               <span>⚡</span><span>重启设备</span>
             </button>
             <button class="btn-card-action" onclick="openClearSmsModal('${slotId}')" title="清空模组内部 LittleFS 闪存短信">
@@ -4995,6 +4996,22 @@
             showToast("🔴 4G 通信网关已断开连接", "danger");
           }
         }
+      }
+
+      // 重启中状态感知与防连击保护 (AIR-76 P2-2)
+      const isRebooting = Boolean(state.rebootingSlots && state.rebootingSlots[slotId] && Date.now() < state.rebootingSlots[slotId]);
+      const btnReboot = document.getElementById(`btnRebootSlot${slotIdx}`);
+      if (btnReboot) {
+        if (isRebooting) {
+          btnReboot.disabled = true;
+          safeUpdateHTML(btnReboot, `<span>⏳</span><span>正在复位入网...</span>`);
+        } else {
+          btnReboot.disabled = !isOnline;
+          safeUpdateHTML(btnReboot, `<span>⚡</span><span>重启设备</span>`);
+        }
+      }
+      if (isRebooting && btnSend) {
+        btnSend.disabled = true;
       }
     }
 
@@ -6045,6 +6062,10 @@
     // 12. 设备重启、清空与网络开关
     // =========================================================
         function openRebootModal(slotId) {
+      if (state.rebootingSlots && state.rebootingSlots[slotId] && Date.now() < state.rebootingSlots[slotId]) {
+        showToast("⚠️ 该卡槽正在复位入网中，请稍候...", "warning");
+        return;
+      }
       if (!state.deviceOnline) {
         showToast("❌ 硬件网关处于离线状态，无法下发重启指令", "danger");
         return;
@@ -6063,6 +6084,14 @@
         return;
       }
       closeModal("modalReboot");
+      state.rebootingSlots[slot] = Date.now() + 5000;
+      if (Array.isArray(state.slots)) renderSlots(state.slots);
+      setTimeout(() => {
+        if (state.rebootingSlots[slot]) {
+          delete state.rebootingSlots[slot];
+          if (Array.isArray(state.slots)) renderSlots(state.slots);
+        }
+      }, 5000);
       showToast(`正在向【${info.name}】下发重启指令...`, "info");
 
       try {
@@ -6073,9 +6102,13 @@
             if (state.isLive) pollDeviceHeartbeat();
           }, 3500);
         } else {
+          delete state.rebootingSlots[slot];
+          if (Array.isArray(state.slots)) renderSlots(state.slots);
           showToast(`❌ 重启失败: ${(res && res.error) || '硬件通信异常'}`, "danger");
         }
       } catch (err) {
+        delete state.rebootingSlots[slot];
+        if (Array.isArray(state.slots)) renderSlots(state.slots);
         showToast("❌ 重启请求异常: " + err.message, "danger");
       }
     }

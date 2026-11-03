@@ -2247,7 +2247,10 @@ class GatewayWebHandler(BaseHTTPRequestHandler):
         if path == "/api/control/reboot":
             reason = body.get("reason", "web_console_action")
             resp = self.backend.execute_cmd("reboot", params={"reason": reason}, slot=target_slot, timeout=3.0)
-            self._send_json_resp(200, {"ok": True, "slot": target_slot, "msg": "重启指令已成功下发至网关"})
+            if resp.get("ok"):
+                self._send_json_resp(200, {"ok": True, "slot": target_slot, "msg": "重启指令已成功下发至网关"})
+            else:
+                self._send_json_resp(400, {"ok": False, "slot": target_slot, "error": resp.get("error") or "重启指令下发失败"})
             return
 
         # 5.1 发起 VoLTE 电话拨号呼叫 (AIR-30)

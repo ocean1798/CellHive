@@ -28,7 +28,7 @@ import base64
 import urllib.request
 import urllib.parse
 import urllib.error
-from typing import List, Dict, Any, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple, Set
 
 from cluster_health import ClusterHealthMonitor, HealthState
 from cluster_router import ClusterRouter, RouteStrategy, detect_sim_carrier, detect_phone_carrier, clean_phone_number
@@ -743,7 +743,7 @@ class DongleSession:
             pending["event"].set()
 
     def _probe_companion_fingerprint_once(self, force: bool = False):
-        """若固件响应未包含 imei/iccid，通过伴生端口安全探测真机指纹 (IMEI 与当前 SIM 的 ICCID)"""
+        """若固件响应未包含 imei/iccid，通过后台守护线程异步安全探测真机指纹 (0.5s 硬超时看门狗防线)"""
         if getattr(self, "is_flashing", False) or getattr(self, "maintenance_job", None) is not None:
             return
         if not force and self.meta.get("imei") and is_valid_iccid(self.meta.get("iccid")):
@@ -753,20 +753,46 @@ class DongleSession:
         if not force and (now - last_attempt < 2.0):  # 2 秒冷却防频繁
             return
         self._last_companion_attempt = now
-        try:
-            fps = probe_dongle_fingerprint_from_companion(self.loc, self.port)
-            if fps.get("imei"):
-                self.meta["imei"] = fps["imei"]
-                log(f"[{self.slot_id}] 伴生端口探测成功补齐机身号 IMEI: {fps['imei']}")
-                if self.loc and hasattr(self.hub, "session_pool"):
-                    self.hub.session_pool.fingerprint_cache[self.loc] = fps["imei"]
-            if fps.get("iccid") and is_valid_iccid(fps["iccid"]):
-                self.meta["iccid"] = fps["iccid"]
-                log(f"[{self.slot_id}] 伴生端口探测成功补齐卡号 ICCID: {fps['iccid']}")
-        except Exception as e:
-            log(f"[{self.slot_id}] 伴生端口探测异常: {e}")
-        finally:
+
+        def _async_probe_worker():
+            probe_result = {}
+            probe_error = None
+            probe_done = threading.Event()
+
+            def _do_probe():
+                nonlocal probe_result, probe_error
+                try:
+                    probe_result = probe_dongle_fingerprint_from_companion(self.loc, self.port)
+                except Exception as e:
+                    probe_error = e
+                finally:
+                    probe_done.set()
+
+            t = threading.Thread(target=_do_probe, daemon=True)
+            t.start()
+            finished = probe_done.wait(timeout=0.5)
             self._companion_probed = True
+            if not finished:
+                log(f"[{self.slot_id}] 伴生端口探测超时 (0.5s 看门狗触发)，放弃等待并平滑降级")
+                return
+
+            if probe_error:
+                log(f"[{self.slot_id}] 伴生端口探测异常: {probe_error}")
+                return
+
+            try:
+                if probe_result.get("imei"):
+                    self.meta["imei"] = probe_result["imei"]
+                    log(f"[{self.slot_id}] 伴生端口探测成功补齐机身号 IMEI: {probe_result['imei']}")
+                    if self.loc and hasattr(self.hub, "session_pool"):
+                        self.hub.session_pool.fingerprint_cache[self.loc] = probe_result["imei"]
+                if probe_result.get("iccid") and is_valid_iccid(probe_result["iccid"]):
+                    self.meta["iccid"] = probe_result["iccid"]
+                    log(f"[{self.slot_id}] 伴生端口探测成功补齐卡号 ICCID: {probe_result['iccid']}")
+            except Exception as e:
+                log(f"[{self.slot_id}] 更新伴生指纹异常: {e}")
+
+        threading.Thread(target=_async_probe_worker, daemon=True).start()
 
     def pause_for_flash(self, job: Optional[Dict[str, Any]] = None):
         """挂起物理串口以供烧录或固件更新占用 (不再发送 AT/复位)"""
@@ -1180,6 +1206,7 @@ class DongleSessionPool:
     def __init__(self, hub: 'GatewayHub'):
         self.hub = hub
         self.sessions: Dict[str, DongleSession] = {}  # port -> DongleSession
+        self._sessions_snapshot: Dict[str, DongleSession] = {}  # 不可变浅拷贝快照 (原子发布替换)
         self.pool_lock = threading.RLock()
         self.running = False
         self.scanner_thread: Optional[threading.Thread] = None
@@ -1196,6 +1223,11 @@ class DongleSessionPool:
         self.unassigned_dongles: List[Dict[str, Any]] = []
         self._last_unassigned_broadcast: float = 0.0
 
+    def _publish_snapshot(self):
+        """原子发布最新会话快照 (仅在锁内更新内存后发布)"""
+        with self.pool_lock:
+            self._sessions_snapshot = dict(self.sessions)
+
     def start(self):
         self.running = True
         # 初始同步扫描一次
@@ -1210,6 +1242,7 @@ class DongleSessionPool:
             for s in list(self.sessions.values()):
                 s.stop()
             self.sessions.clear()
+            self._publish_snapshot()
 
     def wake_scan(self):
         """外部唤醒插拔扫描循环 (AIR-64)"""
@@ -1219,37 +1252,43 @@ class DongleSessionPool:
     def _allocate_slot(self, port: str, loc: str) -> str:
         """为新发现的端口分配稳定卡槽 ID（拓扑亲和性，防止卡槽漂移倒错）"""
         with self.pool_lock:
-            used_slots = set(s.slot_id for s in self.sessions.values())
+            return self._allocate_slot_unlocked(port, loc)
 
-            # 1. 物理拓扑亲和性：1-8 固定为主机卡槽 slot_1，1-13 固定为拓展 Hub 卡槽 slot_2
-            if loc:
-                clean_loc = loc.split(":")[0] if ":" in loc else loc
-                if clean_loc.startswith("1-8") and "slot_1" not in used_slots:
-                    if loc: self.slot_history[loc] = "slot_1"
-                    self.slot_history[port] = "slot_1"
-                    return "slot_1"
-                elif clean_loc.startswith("1-13") and "slot_2" not in used_slots:
-                    if loc: self.slot_history[loc] = "slot_2"
-                    self.slot_history[port] = "slot_2"
-                    return "slot_2"
+    def _allocate_slot_unlocked(self, port: str, loc: str, extra_used: Optional[Set[str]] = None) -> str:
+        used_slots = set(s.slot_id for s in self.sessions.values())
+        if extra_used:
+            used_slots.update(extra_used)
 
-            # 2. 优先复用历史分配记录
-            hist = self.slot_history.get(loc) or self.slot_history.get(port)
-            if hist and hist not in used_slots:
-                return hist
+        # 1. 物理拓扑亲和性：1-8 固定为主机卡槽 slot_1，1-13 固定为拓展 Hub 卡槽 slot_2
+        if loc:
+            clean_loc = loc.split(":")[0] if ":" in loc else loc
+            if clean_loc.startswith("1-8") and "slot_1" not in used_slots:
+                if loc: self.slot_history[loc] = "slot_1"
+                self.slot_history[port] = "slot_1"
+                return "slot_1"
+            elif clean_loc.startswith("1-13") and "slot_2" not in used_slots:
+                if loc: self.slot_history[loc] = "slot_2"
+                self.slot_history[port] = "slot_2"
+                return "slot_2"
 
-            # 3. 贪心寻找最小未被使用的 slot_1, slot_2, ...
-            idx = 1
-            while True:
-                candidate = f"slot_{idx}"
-                if candidate not in used_slots:
-                    if loc: self.slot_history[loc] = candidate
-                    self.slot_history[port] = candidate
-                    return candidate
-                idx += 1
+        # 2. 优先复用历史分配记录
+        hist = self.slot_history.get(loc) or self.slot_history.get(port)
+        if hist and hist not in used_slots:
+            return hist
+
+        # 3. 贪心寻找最小未被使用的 slot_1, slot_2, ...
+        idx = 1
+        while True:
+            candidate = f"slot_{idx}"
+            if candidate not in used_slots:
+                if loc: self.slot_history[loc] = candidate
+                self.slot_history[port] = candidate
+                return candidate
+            idx += 1
 
     def _sync_ports(self):
-        """执行一次全量串口扫描并执行增量会话同步 (AIR-64: 单次硬件设备树扫描复用)"""
+        """执行一次全量串口扫描并执行增量会话同步 (AIR-64 / AIR-76 彻底解耦锁与阻塞 I/O)"""
+        # 阶段 1: 硬件串口物理扫描 (无锁耗时操作)
         try:
             raw_ports = list(serial.tools.list_ports.comports())
         except Exception as e:
@@ -1259,57 +1298,73 @@ class DongleSessionPool:
         detected_list = scan_all_cellular_ports(ports_list=raw_ports)
         detected_ports = set(d["port"] for d in detected_list)
 
+        # 阶段 2: 短锁计算拓扑差异 (< 1ms 纯内存比对，合并已分配池防 Slot ID 碰撞 P2-1)
+        to_add = []
+        to_remove = []
         with self.pool_lock:
             current_ports = set(self.sessions.keys())
-
-            # 发现新接入端口
+            allocated_slots_in_batch = set(s.slot_id for s in self.sessions.values())
             for d in detected_list:
                 p = d["port"]
                 if p not in current_ports:
                     loc = d["loc"]
-                    slot_id = self._allocate_slot(p, loc)
-                    session = DongleSession(p, loc, slot_id, self.hub)
-                    cached_imei = self.fingerprint_cache.get(loc) or self.fingerprint_cache.get(p)
-                    if cached_imei and not session.meta.get("imei"):
-                        session.meta["imei"] = cached_imei
-                    self.sessions[p] = session
-                    if hasattr(self.hub, "bind_update_session"):
-                        self.hub.bind_update_session(session)
-                    session.start()
-                    log(f"⚡ [CLUSTER] 发现新卡板上线: {p} (位置: {loc}) -> 分配卡槽: 【{slot_id}】")
-                    # 广播模组连接事件
-                    self.hub.broadcast_json({
-                        "type": "event",
-                        "event": "dongle_connected",
-                        "slot": slot_id,
-                        "data": session.get_summary()
-                    })
+                    slot_id = self._allocate_slot_unlocked(p, loc, extra_used=allocated_slots_in_batch)
+                    allocated_slots_in_batch.add(slot_id)
+                    to_add.append((p, loc, slot_id))
                 else:
                     existing_sess = self.sessions.get(p)
                     if existing_sess and hasattr(self.hub, "bind_update_session"):
                         self.hub.bind_update_session(existing_sess)
 
-            # 检测拔出断开端口
-            for p in list(current_ports):
+            for p in current_ports:
                 if p not in detected_ports:
-                    session = self.sessions.pop(p)
-                    slot_id = session.slot_id
-                    self._last_disconnect_time = time.time()
-                    session.stop()
-                    log(f"⚠️ [CLUSTER] 检测到卡板断开拔出: {p} (曾用卡槽: 【{slot_id}】)")
-                    # 广播模组断开事件
-                    self.hub.broadcast_json({
-                        "type": "event",
-                        "event": "dongle_disconnected",
-                        "slot": slot_id,
-                        "data": {"slot": slot_id, "port": p, "online": False}
-                    })
+                    to_remove.append(p)
 
-            # AIR-35: 探测未绑定的移芯出厂态/Bootloader 端口 (全量安全嗅探，无竞争，复用单次枚举)
-            try:
-                self._sniff_unassigned_dongles(current_ports, ports_list=raw_ports)
-            except Exception as e:
-                log(f"未分配模组探测异常: {e}")
+        # 阶段 3: 物理关闭与移除会话 (脱锁执行)
+        for p in to_remove:
+            sess = None
+            with self.pool_lock:
+                if p in self.sessions:
+                    sess = self.sessions.pop(p)
+                    self._publish_snapshot()
+            if sess:
+                slot_id = sess.slot_id
+                self._last_disconnect_time = time.time()
+                sess.stop()
+                log(f"⚠️ [CLUSTER] 检测到卡板断开拔出: {p} (曾用卡槽: 【{slot_id}】)")
+                self.hub.broadcast_json({
+                    "type": "event",
+                    "event": "dongle_disconnected",
+                    "slot": slot_id,
+                    "data": {"slot": slot_id, "port": p, "online": False}
+                })
+
+        # 阶段 4: 初始化并启动新会话 (脱锁执行)
+        for p, loc, slot_id in to_add:
+            session = DongleSession(p, loc, slot_id, self.hub)
+            cached_imei = self.fingerprint_cache.get(loc) or self.fingerprint_cache.get(p)
+            if cached_imei and not session.meta.get("imei"):
+                session.meta["imei"] = cached_imei
+            with self.pool_lock:
+                self.sessions[p] = session
+                self._publish_snapshot()
+            if hasattr(self.hub, "bind_update_session"):
+                self.hub.bind_update_session(session)
+            session.start()
+            log(f"⚡ [CLUSTER] 发现新卡板上线: {p} (位置: {loc}) -> 分配卡槽: 【{slot_id}】")
+            self.hub.broadcast_json({
+                "type": "event",
+                "event": "dongle_connected",
+                "slot": slot_id,
+                "data": session.get_summary()
+            })
+
+        # 阶段 5: 未分配模组嗅探 (完全无锁执行，绝不拿全局互斥锁)
+        try:
+            bound = set(self._sessions_snapshot.keys())
+            self._sniff_unassigned_dongles(bound, ports_list=raw_ports)
+        except Exception as e:
+            log(f"未分配模组探测异常: {e}")
 
     def _is_port_in_maintenance(self, p: Any) -> bool:
         """纯枚举当前端口 USB 身份检查 store.active，占用或故障均跳过"""
@@ -1367,7 +1422,7 @@ class DongleSessionPool:
 
         # 2. 寻找未绑定到会话池的 19D1 端口（如全新裸板插上，出厂仅有 AT 固件，或用户通信口 x.6 未运行智能网关固件）
         active_session_loc_prefixes = set()
-        for s in self.sessions.values():
+        for s in self._sessions_snapshot.values():
             if s.loc and ":" in s.loc:
                 active_session_loc_prefixes.add(s.loc.split(":")[0])
 
@@ -1464,34 +1519,34 @@ class DongleSessionPool:
         【防串台铁律】：若显式指定了 target，未找到或不在线时必须严格返回 None，绝对不可降级回退到 slot_1 或其他卡槽！
         仅当 target 为空/None 时，才允许缺省匹配：优先 slot_1，其次首个可用在线会话。
         """
-        with self.pool_lock:
-            if target and str(target).strip():
-                target_str = str(target).strip()
-                # 尝试匹配 slot
-                for s in self.sessions.values():
-                    if s.slot_id.lower() == target_str.lower():
-                        return s if (not active_only or s.is_connected) else None
-                # 尝试匹配 port
-                for s in self.sessions.values():
-                    if s.port.upper() == target_str.upper():
-                        return s if (not active_only or s.is_connected) else None
-                # 显式指定的目标不存在，直接返回 None，杜绝跨卡槽串台！
-                return None
+        snapshot = self._sessions_snapshot
+        if target and str(target).strip():
+            target_str = str(target).strip()
+            # 尝试匹配 slot
+            for s in snapshot.values():
+                if s.slot_id.lower() == target_str.lower():
+                    return s if (not active_only or s.is_connected) else None
+            # 尝试匹配 port
+            for s in snapshot.values():
+                if s.port.upper() == target_str.upper():
+                    return s if (not active_only or s.is_connected) else None
+            # 显式指定的目标不存在，直接返回 None，杜绝跨卡槽串台！
+            return None
 
-            # 缺省降级匹配（仅在未显式指定 target 时生效）：优先 slot_1
-            for s in self.sessions.values():
-                if s.slot_id == "slot_1" and (not active_only or s.is_connected):
-                    return s
-            # 否则取任意在线设备
-            for s in self.sessions.values():
-                if not active_only or s.is_connected:
-                    return s
+        # 缺省降级匹配（仅在未显式指定 target 时生效）：优先 slot_1
+        for s in snapshot.values():
+            if s.slot_id == "slot_1" and (not active_only or s.is_connected):
+                return s
+        # 否则取任意在线设备
+        for s in snapshot.values():
+            if not active_only or s.is_connected:
+                return s
         return None
 
     def list_all_summaries(self) -> List[Dict[str, Any]]:
-        with self.pool_lock:
-            sorted_sessions = sorted(self.sessions.values(), key=lambda s: s.slot_id)
-            return [s.get_summary() for s in sorted_sessions]
+        snapshot = self._sessions_snapshot
+        sorted_sessions = sorted(snapshot.values(), key=lambda s: s.slot_id)
+        return [s.get_summary() for s in sorted_sessions]
 
 
 # =========================================================================
@@ -2476,22 +2531,45 @@ class GatewayHub:
 
         # 4. 更新集群健康监控状态机 (AIR-22)
         try:
-            if frame_type == "event":
-                if evt in ("state_change", "gateway_ready"):
+            if getattr(self, "health_monitor", None):
+                if frame_type == "event":
+                    if evt == "gateway_ready":
+                        # 硬件完成冷启动/软重启重新上线：重置健康状态机，赋予其全新开机周期
+                        self.health_monitor.reset_slot(session.slot_id)
+
+                    if evt in ("state_change", "gateway_ready"):
+                        csq = data.get("csq") if isinstance(data, dict) else None
+                        if csq is not None:
+                            csq_val = int(csq)
+                            net_ready = bool(data.get("net_ready", False)) if isinstance(data, dict) else False
+                            # 未驻网/搜网瞬态（csq == 0 且 net_ready == False）暂不触发微弱信号熔断
+                            is_unready_zero = (csq_val == 0 and not net_ready)
+                            if not is_unready_zero:
+                                self.health_monitor.update_csq(session.slot_id, csq_val)
+                                # 若先前仅因瞬态低信号被隔离（且真实发送失败次数为 0），当信号恢复良好时立即自愈为健康
+                                rec = self.health_monitor.records.get(session.slot_id)
+                                if rec and rec.state == HealthState.ISOLATED and rec.consecutive_failures == 0:
+                                    if csq_val >= 10 and net_ready:
+                                        self.health_monitor.reset_slot(session.slot_id)
+                    elif evt == "sms_sent":
+                        ok = bool(data.get("ok", True)) if isinstance(data, dict) else True
+                        if ok:
+                            self.health_monitor.record_send_success(session.slot_id)
+                        else:
+                            err = str(data.get("error") or data.get("msg") or "SMS_SEND_FAILED") if isinstance(data, dict) else "SMS_SEND_FAILED"
+                            self.health_monitor.record_send_failure(session.slot_id, err)
+                elif frame_type == "res" and isinstance(data, dict):
                     csq = data.get("csq")
                     if csq is not None:
-                        self.health_monitor.update_csq(session.slot_id, int(csq))
-                elif evt == "sms_sent":
-                    ok = bool(data.get("ok", True))
-                    if ok:
-                        self.health_monitor.record_send_success(session.slot_id)
-                    else:
-                        err = str(data.get("error") or data.get("msg") or "SMS_SEND_FAILED")
-                        self.health_monitor.record_send_failure(session.slot_id, err)
-            elif frame_type == "res" and isinstance(data, dict):
-                csq = data.get("csq")
-                if csq is not None:
-                    self.health_monitor.update_csq(session.slot_id, int(csq))
+                        csq_val = int(csq)
+                        net_ready = bool(data.get("net_ready", False))
+                        is_unready_zero = (csq_val == 0 and not net_ready)
+                        if not is_unready_zero:
+                            self.health_monitor.update_csq(session.slot_id, csq_val)
+                            rec = self.health_monitor.records.get(session.slot_id)
+                            if rec and rec.state == HealthState.ISOLATED and rec.consecutive_failures == 0:
+                                if csq_val >= 10:
+                                    self.health_monitor.reset_slot(session.slot_id)
         except Exception as e:
             log(f"[{session.slot_id}] 健康状态机更新异常: {e}")
 
@@ -3568,6 +3646,46 @@ class GatewayHub:
                 "msg": "HANGUP_SENT",
                 "slot": session.slot_id
             }) + "\n"
+            if sock: sock.sendall(ack_resp.encode("utf-8"))
+            else: self.broadcast_text(ack_resp)
+            return
+
+        # 3. 模组软重启即时确认 ACK (AIR-76: 出站即确认，消除 Web 挂起与死锁)
+        if cmd_name == "reboot":
+            session = self.session_pool.get_session(target_slot)
+            if not session or not session.is_connected:
+                err_resp = json.dumps({
+                    "type": "res",
+                    "id": req_id,
+                    "ok": False,
+                    "code": -1,
+                    "msg": "HARDWARE_DISCONNECTED",
+                    "error": f"卡槽 [{target_slot}] 不在线或未插入" if target_slot else "无可用的在线 4G 模组",
+                    "slot": target_slot
+                }, ensure_ascii=False) + "\n"
+                if sock: sock.sendall(err_resp.encode("utf-8"))
+                else: self.broadcast_text(err_resp)
+                return
+
+            # 清除卡槽历史故障熔断状态与孤立时间
+            if getattr(self, "health_monitor", None):
+                self.health_monitor.reset_slot(session.slot_id)
+
+            # 1. 向物理串口下发 reboot 报文
+            cmd_obj["type"] = "cmd"
+            clean_line = json.dumps(cmd_obj, ensure_ascii=False)
+            sent_ok = session.send_line(clean_line)
+
+            # 2. 发送成功瞬间向调用方回写成功 ACK，不让客户端挂起傻等
+            ack_resp = json.dumps({
+                "type": "res",
+                "id": req_id,
+                "ok": sent_ok,
+                "code": 0 if sent_ok else -1,
+                "msg": "REBOOT_COMMENCED" if sent_ok else "WRITE_FAILED",
+                "error": None if sent_ok else "串口写入指令失败",
+                "slot": session.slot_id
+            }, ensure_ascii=False) + "\n"
             if sock: sock.sendall(ack_resp.encode("utf-8"))
             else: self.broadcast_text(ack_resp)
             return
